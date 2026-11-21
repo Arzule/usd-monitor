@@ -5,9 +5,21 @@ export interface OutlierConfig {
   window: number;
   /** Mínimo de lecturas válidas antes de marcar algo (arranque). */
   minSamples: number;
+  /**
+   * Antigüedad máxima (s) de las lecturas usadas para la mediana. Evita que el filtro
+   * quede "pegado" tras un cambio de nivel real: pasado este tiempo, las lecturas
+   * viejas salen de la muestra, se vuelve a la fase de arranque y el nuevo nivel
+   * pasa a ser la referencia.
+   */
+  maxAgeSeconds: number;
 }
 
-export const DEFAULT_OUTLIER_CONFIG: OutlierConfig = { threshold: 0.01, window: 12, minSamples: 5 };
+export const DEFAULT_OUTLIER_CONFIG: OutlierConfig = {
+  threshold: 0.01,
+  window: 12,
+  minSamples: 5,
+  maxAgeSeconds: 2 * 3600,
+};
 
 export function median(values: readonly number[]): number {
   if (values.length === 0) throw new Error("median de lista vacía");

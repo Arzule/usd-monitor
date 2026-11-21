@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import worker, { CRON_LIVE } from "../src/index";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CREDITS_PER_DAY,
   CREDITS_PER_MINUTE,
   cleanup,
   ingestLive,
@@ -105,6 +106,32 @@ describe("ingestLive", () => {
     expect(row).toEqual({ is_outlier: 1 });
   });
 
+  it("cambio de nivel real: deja de marcar cuando las lecturas viejas salen de la ventana (2 h)", async () => {
+    quiet();
+    const t0 = 1_800_000_000;
+    await env.DB.batch(
+      [3.4, 3.41, 3.39, 3.4, 3.405].map((p, i) =>
+        env.DB.prepare("INSERT INTO live_rates (ts, price, source) VALUES (?, ?, 't')").bind(
+          t0 + i * 300,
+          p,
+        ),
+      ),
+    );
+    // Salta a 3.6 y se queda ahí: al principio es outlier...
+    const first = await ingestLive(env, { now: OPEN, fetchFn: mockFetch(quote(3.6, t0 + 1800)) });
+    expect(first.isOutlier).toBe(true);
+    // ...pero 2 h después del último dato válido ya no hay muestra vieja: arranque, no se marca.
+    const later = await ingestLive(env, {
+      now: OPEN,
+      fetchFn: mockFetch(quote(3.6, t0 + 1200 + 7300)),
+    });
+    expect(later).toMatchObject({ status: "stored", isOutlier: false, median: null });
+  });
+
+  it("parseQuote exige last_quote_at (timestamp es el inicio de la vela diaria)", () => {
+    expect(() => parseQuote({ close: "3.4", timestamp: 1 })).toThrow(/last_quote_at/);
+  });
+
   it("429 de la API: un reintento y luego éxito", async () => {
     quiet();
     const fetchFn = mockFetch({ status: "error", code: 429, message: "límite" }, quote(3.38, 5));
@@ -127,6 +154,24 @@ describe("ingestLive", () => {
     const fetchFn = mockFetch(quote(3.38, 7));
     await expect(ingestLive(env, { now: OPEN, force: true, fetchFn })).rejects.toThrow(/créditos/);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("respeta el tope diario de créditos", async () => {
+    quiet();
+    const now = Math.floor(Date.now() / 1000);
+    const stmts = Array.from({ length: CREDITS_PER_DAY }, (_, i) =>
+      env.DB.prepare("INSERT INTO twelve_calls (ts) VALUES (?)").bind(now - 120 - i * 60),
+    );
+    for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+    await expect(reserveCredit(env.DB, Date.now())).rejects.toThrow(/créditos/);
+  });
+
+  it("cada intento (incluido el reintento) queda registrado como crédito", async () => {
+    quiet();
+    const fetchFn = mockFetch({ status: "error", code: 429, message: "x" }, quote(3.38, 9));
+    await ingestLive(env, { now: OPEN, fetchFn, retryDelayMs: 0 });
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM twelve_calls").first();
+    expect(row).toEqual({ n: 2 });
   });
 });
 

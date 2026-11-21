@@ -39,6 +39,12 @@ describe("classify", () => {
     expect(classify(3.8, recent)).toMatchObject({ isOutlier: false, median: 3.8 });
   });
 
+  it("minSamples nunca supera window", () => {
+    expect(
+      outlierConfigFromEnv({ OUTLIER_WINDOW: "3", OUTLIER_MIN_SAMPLES: "10" }).minSamples,
+    ).toBe(3);
+  });
+
   it("umbral configurable", () => {
     const cfg = { ...DEFAULT_OUTLIER_CONFIG, threshold: 0.001 };
     expect(classify(3.41, base, cfg).isOutlier).toBe(true);
@@ -51,6 +57,7 @@ describe("outlierConfigFromEnv", () => {
       threshold: 0.02,
       window: 20,
       minSamples: 5,
+      maxAgeSeconds: 7200,
     });
     expect(outlierConfigFromEnv({ OUTLIER_THRESHOLD: "abc", OUTLIER_WINDOW: "-1" })).toEqual(
       DEFAULT_OUTLIER_CONFIG,

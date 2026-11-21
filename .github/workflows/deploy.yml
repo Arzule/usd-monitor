@@ -56,7 +56,7 @@ jobs:
         id: prev
         run: |
           set -uo pipefail
-          # Solo "has no deployments" cuenta como primer deploy (sin rollback posible).
+          # Solo "has no deployments" o Worker inexistente (10007) cuentan como primer deploy.
           # Cualquier otro error, o no encontrar una versión al 100 %, detiene el deploy:
           # no se despliega sin saber a qué versión volver.
           if out="$(npx wrangler deployments status --json 2>"$RUNNER_TEMP/prev.err")"; then

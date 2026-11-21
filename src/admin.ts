@@ -54,6 +54,7 @@ export async function handleAdminFetch(request: Request, env: Env, url: URL): Pr
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof CreditLimitError) {
+      console.warn(`[admin] ${source} rechazado: ${message}`);
       return json(
         { ok: false, source, error: message },
         { status: 429, headers: { "retry-after": "60" } },

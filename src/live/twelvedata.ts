@@ -39,12 +39,15 @@ export function parseQuote(body: unknown): Quote {
     throw new TwelveDataError(`API error ${String(code)}: ${msg}`, RETRYABLE_API_CODES.has(code));
   }
   const price = typeof b.close === "string" ? Number(b.close) : NaN;
-  const rawTs = b.last_quote_at ?? b.timestamp;
-  const ts = typeof rawTs === "number" ? rawTs : NaN;
+  // Solo last_quote_at: `timestamp` es el inicio de la vela diaria y haría que todas
+  // las lecturas del día parezcan duplicadas.
+  const ts = typeof b.last_quote_at === "number" ? b.last_quote_at : NaN;
   if (!Number.isFinite(price) || price <= 0) {
     throw new TwelveDataError("respuesta sin precio válido", true);
   }
-  if (!Number.isInteger(ts) || ts <= 0) throw new TwelveDataError("respuesta sin timestamp", true);
+  if (!Number.isInteger(ts) || ts <= 0) {
+    throw new TwelveDataError("respuesta sin last_quote_at", true);
+  }
   return { ts, price };
 }
 

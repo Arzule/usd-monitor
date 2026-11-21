@@ -35,3 +35,5 @@ TWELVE_DATA_SYMBOL = "USD/PEN"
 OUTLIER_THRESHOLD = "0.01"
 OUTLIER_WINDOW = "12"
 OUTLIER_MIN_SAMPLES = "5"
+# Solo lecturas de las últimas 2 h entran en la mediana (re-anclaje tras un cambio de nivel).
+OUTLIER_MAX_AGE_SECONDS = "7200"

@@ -11,10 +11,14 @@ export const RETENTION_DAYS = 90;
  * forzada coincidiendo con el cron (y sus reintentos) nunca exceda el límite.
  */
 export const CREDITS_PER_MINUTE = 6;
+/** Twelve Data Basic: 800 créditos/día. Tope local con margen (el cron usa ~288). */
+export const CREDITS_PER_DAY = 750;
 
 export class CreditLimitError extends Error {
   constructor() {
-    super(`límite local de ${String(CREDITS_PER_MINUTE)} créditos/min alcanzado`);
+    super(
+      `límite local de créditos alcanzado (${String(CREDITS_PER_MINUTE)}/min o ${String(CREDITS_PER_DAY)}/día)`,
+    );
     this.name = "CreditLimitError";
   }
 }
@@ -25,10 +29,16 @@ export function outlierConfigFromEnv(env: Partial<Record<string, unknown>>): Out
     const n = typeof v === "string" ? Number(v) : NaN;
     return Number.isFinite(n) && n >= min && n <= max ? n : def;
   };
+  const window = Math.round(num(env.OUTLIER_WINDOW, DEFAULT_OUTLIER_CONFIG.window, 3, 100));
   return {
     threshold: num(env.OUTLIER_THRESHOLD, DEFAULT_OUTLIER_CONFIG.threshold, 0.0001, 0.5),
-    window: Math.round(num(env.OUTLIER_WINDOW, DEFAULT_OUTLIER_CONFIG.window, 3, 100)),
-    minSamples: Math.round(num(env.OUTLIER_MIN_SAMPLES, DEFAULT_OUTLIER_CONFIG.minSamples, 1, 100)),
+    window,
+    minSamples: Math.round(
+      num(env.OUTLIER_MIN_SAMPLES, Math.min(DEFAULT_OUTLIER_CONFIG.minSamples, window), 1, window),
+    ),
+    maxAgeSeconds: Math.round(
+      num(env.OUTLIER_MAX_AGE_SECONDS, DEFAULT_OUTLIER_CONFIG.maxAgeSeconds, 600, 7 * 86_400),
+    ),
   };
 }
 
@@ -39,12 +49,18 @@ export function outlierConfigFromEnv(env: Partial<Record<string, unknown>>): Out
  */
 export async function reserveCredit(db: D1Database, nowMs: number): Promise<void> {
   const now = Math.floor(nowMs / 1000);
-  const row = await db
-    .prepare("SELECT COUNT(*) AS n FROM twelve_calls WHERE ts > ?")
-    .bind(now - 60)
-    .first<{ n: number }>();
-  if ((row?.n ?? 0) >= CREDITS_PER_MINUTE) throw new CreditLimitError();
-  await db.prepare("INSERT INTO twelve_calls (ts) VALUES (?)").bind(now).run();
+  // Chequeo e inserción en una sola sentencia (atómica en D1): dos lecturas
+  // concurrentes no pueden pasar ambas el límite.
+  const res = await db
+    .prepare(
+      `INSERT INTO twelve_calls (ts)
+       SELECT ?1 WHERE
+         (SELECT COUNT(*) FROM twelve_calls WHERE ts > ?1 - 60) < ?2 AND
+         (SELECT COUNT(*) FROM twelve_calls WHERE ts > ?1 - 86400) < ?3`,
+    )
+    .bind(now, CREDITS_PER_MINUTE, CREDITS_PER_DAY)
+    .run();
+  if (res.meta.changes === 0) throw new CreditLimitError();
 }
 
 export interface LiveResult {
@@ -79,9 +95,9 @@ export async function ingestLive(env: Env, opts: LiveOptions = {}): Promise<Live
 
   const config = outlierConfigFromEnv(env as unknown as Record<string, unknown>);
   const { results } = await env.DB.prepare(
-    "SELECT price FROM live_rates WHERE is_outlier = 0 AND ts < ? ORDER BY ts DESC LIMIT ?",
+    "SELECT price FROM live_rates WHERE is_outlier = 0 AND ts < ? AND ts >= ? ORDER BY ts DESC LIMIT ?",
   )
-    .bind(quote.ts, config.window)
+    .bind(quote.ts, quote.ts - config.maxAgeSeconds, config.window)
     .all<{ price: number }>();
   const verdict = classify(
     quote.price,
