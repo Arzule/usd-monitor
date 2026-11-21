@@ -32,7 +32,11 @@ export class TwelveDataError extends Error {
 
 /** Valida la respuesta de /quote. Twelve Data puede devolver HTTP 200 con `status: "error"`. */
 export function parseQuote(body: unknown): Quote {
-  const b = (body ?? {}) as QuoteBody;
+  // Cuerpo vacío (null, {} o no-objeto): transitorio, se reintenta una vez.
+  if (body === null || typeof body !== "object" || Object.keys(body).length === 0) {
+    throw new TwelveDataError("respuesta vacía", true);
+  }
+  const b = body as QuoteBody;
   if (b.status === "error") {
     const code = typeof b.code === "number" ? b.code : 0;
     const msg = typeof b.message === "string" ? b.message.slice(0, 200) : "sin mensaje";
@@ -43,10 +47,10 @@ export function parseQuote(body: unknown): Quote {
   // las lecturas del día parezcan duplicadas.
   const ts = typeof b.last_quote_at === "number" ? b.last_quote_at : NaN;
   if (!Number.isFinite(price) || price <= 0) {
-    throw new TwelveDataError("respuesta sin precio válido", true);
+    throw new TwelveDataError("respuesta sin precio válido", false);
   }
   if (!Number.isInteger(ts) || ts <= 0) {
-    throw new TwelveDataError("respuesta sin last_quote_at", true);
+    throw new TwelveDataError("respuesta sin last_quote_at", false);
   }
   return { ts, price };
 }

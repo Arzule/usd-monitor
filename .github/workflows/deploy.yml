@@ -33,6 +33,9 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          # HEAD^ = commit que estaba desplegado: su smoke.sh valida la versión restaurada.
+          fetch-depth: 2
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -106,12 +109,12 @@ jobs:
             active="$(npx wrangler deployments status --json 2>/dev/null \
               | jq -r '[.versions[]? | select(.percentage == 100) | .version_id][0] // empty' || true)"
             if [ -n "$active" ] && [ "$active" != "$PREV" ]; then
-              echo "::warning::wrangler falló después de activar la versión ${active}"
+              echo "::warning::No se leyó el Version ID de la salida; versión activa según la API: ${active}"
               version="$active"
             fi
           fi
           if [ "$rc" -eq 0 ] && [ -z "$version" ]; then
-            echo "::error::Deploy OK pero no se pudo determinar la versión desplegada; no se omite el smoke"
+            echo "::error::Deploy OK pero no se pudo determinar la versión desplegada (sin smoke ni rollback): revisar a mano"
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -137,7 +140,13 @@ jobs:
           bash scripts/redact-log.sh "$RUNNER_TEMP/rollback.log"
           [ "$rc" -eq 0 ] || exit "$rc"
           echo "Re-ejecutando smoke test contra la versión restaurada"
-          bash scripts/smoke.sh "$PROD_URL" "$RUNNER_TEMP/smoke-after-rollback.md"
+          # Se usa el smoke.sh de la versión previa: el del commit nuevo puede exigir
+          # endpoints que la versión restaurada todavía no tiene.
+          if git show HEAD^:scripts/smoke.sh > "$RUNNER_TEMP/smoke-prev.sh" 2>/dev/null; then
+            bash "$RUNNER_TEMP/smoke-prev.sh" "$PROD_URL" "$RUNNER_TEMP/smoke-after-rollback.md"
+          else
+            SMOKE_CHECKS="health home" bash scripts/smoke.sh "$PROD_URL" "$RUNNER_TEMP/smoke-after-rollback.md"
+          fi
 
       - name: Resumen
         if: always()

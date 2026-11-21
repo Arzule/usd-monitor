@@ -94,10 +94,16 @@ export async function ingestLive(env: Env, opts: LiveOptions = {}): Promise<Live
   });
 
   const config = outlierConfigFromEnv(env as unknown as Record<string, unknown>);
+  // La antigüedad se mide desde la última lectura guardada (incluidos outliers), no
+  // desde la cotización nueva: tras el fin de semana la muestra del viernes sigue
+  // vigente, y tras un cambio de nivel sostenido las lecturas viejas expiran igual.
   const { results } = await env.DB.prepare(
-    "SELECT price FROM live_rates WHERE is_outlier = 0 AND ts < ? AND ts >= ? ORDER BY ts DESC LIMIT ?",
+    `SELECT price FROM live_rates
+     WHERE is_outlier = 0 AND ts < ?1
+       AND ts >= (SELECT COALESCE(MAX(ts), ?1) FROM live_rates WHERE ts < ?1) - ?2
+     ORDER BY ts DESC LIMIT ?3`,
   )
-    .bind(quote.ts, quote.ts - config.maxAgeSeconds, config.window)
+    .bind(quote.ts, config.maxAgeSeconds, config.window)
     .all<{ price: number }>();
   const verdict = classify(
     quote.price,

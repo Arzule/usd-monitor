@@ -34,6 +34,18 @@ export async function dispatch(
 
   if (route) {
     const method = request.method.toUpperCase();
+    // Preflight CORS para la API pública (solo lectura).
+    if (method === "OPTIONS" && route.GET && url.pathname.startsWith("/api/")) {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "GET, HEAD, OPTIONS",
+          "access-control-allow-headers": "content-type",
+          "access-control-max-age": "86400",
+        },
+      });
+    }
     if (method === "HEAD" && route.GET) {
       const res = await route.GET(request, env, ctx, url);
       return new Response(null, { status: res.status, headers: res.headers });
