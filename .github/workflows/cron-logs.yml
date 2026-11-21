@@ -31,19 +31,28 @@ jobs:
           MINUTES: ${{ inputs.minutes }}
         run: |
           set -uo pipefail
-          m="${MINUTES:-6}"; [[ "$m" =~ ^[0-9]+$ ]] && [ "$m" -le 15 ] || m=6
-          timeout "$((m * 60))" npx wrangler tail --format json > "$RUNNER_TEMP/tail.jsonl" 2>/dev/null || true
-          # Solo eventos scheduled: cron, hora y mensajes de log (sin cabeceras ni IPs).
+          m="${MINUTES:-6}"
+          # 1–15 en decimal (evita 0 = sin límite y 08/09 leídos como octal).
+          [[ "$m" =~ ^[1-9][0-9]?$ ]] && [ "$((10#$m))" -le 15 ] || m=6
+          timeout "$((10#$m * 60))" npx wrangler tail --format json \
+            > "$RUNNER_TEMP/tail.jsonl" 2> "$RUNNER_TEMP/tail.err" || true
+          # Solo eventos scheduled: cron, hora, resultado, logs y excepciones (sin cabeceras ni IPs).
           jq -rc 'select(.event.cron != null) |
-            "\(.eventTimestamp / 1000 | todate) cron=\(.event.cron) outcome=\(.outcome) logs=\([.logs[]?.message[]?] | join(" | "))"' \
-            "$RUNNER_TEMP/tail.jsonl" > "$RUNNER_TEMP/scheduled.txt" || true
-          bash scripts/redact-log.sh "$RUNNER_TEMP/scheduled.txt"
+            "\(.eventTimestamp / 1000 | todate) cron=\(.event.cron) outcome=\(.outcome) logs=\([.logs[]?.message[]?] | join(" | ")) exceptions=\([.exceptions[]?.message] | join(" | "))"' \
+            "$RUNNER_TEMP/tail.jsonl" > "$RUNNER_TEMP/scheduled.raw" || true
+          bash scripts/redact-log.sh "$RUNNER_TEMP/scheduled.raw" > "$RUNNER_TEMP/scheduled.txt"
+          cat "$RUNNER_TEMP/scheduled.txt"
           n=$(wc -l < "$RUNNER_TEMP/scheduled.txt")
           {
             echo "## Cron en producción (${m} min de escucha)"
             echo "Eventos scheduled: ${n}"
             echo '```'
-            bash scripts/redact-log.sh "$RUNNER_TEMP/scheduled.txt"
+            cat "$RUNNER_TEMP/scheduled.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          [ "$n" -gt 0 ] || { echo "::error::No se observó ningún evento scheduled"; exit 1; }
+          if [ "$n" -eq 0 ]; then
+            echo "stderr de wrangler tail (redactado):"
+            bash scripts/redact-log.sh "$RUNNER_TEMP/tail.err" | tail -20
+            echo "::error::No se observó ningún evento scheduled"
+            exit 1
+          fi

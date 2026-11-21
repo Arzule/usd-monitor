@@ -25,8 +25,8 @@ flowchart LR
     MCP["/mcp Streamable HTTP<br/>5 tools solo lectura"] --> D1
     ASSETS["Assets estáticos<br/>dashboard (public/)"] --> API
   end
-  TD["Twelve Data /quote"] <-- "1 crédito/llamada<br/>header apikey" --- CRON5
-  BCRP["API BCRP<br/>PD04637PD-PD04638PD"] <--- CRONH
+  CRON5 -- "1 crédito/llamada<br/>header apikey" --> TD["Twelve Data /quote"]
+  CRONH --> BCRP["API BCRP<br/>PD04637PD-PD04638PD"]
   GH["GitHub Actions<br/>manual-fetch.yml"] --> ADMIN
   U["Navegador"] --> ASSETS
   C["Claude / cliente MCP"] --> MCP
@@ -121,7 +121,7 @@ El workflow **`manual-fetch.yml`** (`workflow_dispatch`) lo llama desde GitHub. 
 | `CLOUDFLARE_API_TOKEN`  | GitHub          | Plantilla "Edit Cloudflare Workers" + D1 Edit                                                      |
 | `CLOUDFLARE_ACCOUNT_ID` | GitHub          | Cuenta de Cloudflare                                                                               |
 
-- **Rotar `ADMIN_TOKEN`:** generar un valor nuevo y guardarlo con `gh secret set ADMIN_TOKEN --body <valor>`, sin pasarlo por un pipe de PowerShell (agrega CRLF y el token deja de coincidir). Luego volver a ejecutar `deploy.yml`.
+- **Rotar `ADMIN_TOKEN`:** ejecutar `gh secret set ADMIN_TOKEN -R Arzule/usd-monitor` y pegar un valor nuevo en el prompt oculto (no queda en el historial del shell). Evitar pasarlo por un pipe de PowerShell: agrega CRLF y el token deja de coincidir. Luego volver a ejecutar `deploy.yml`.
 - Ningún secret vive en el código, en `wrangler.toml`, en los logs ni en el historial de git.
 
 ## Tests
@@ -158,7 +158,7 @@ flowchart TD
 ```
 
 - **`main` protegido:** check `ci` obligatorio, sin force-push ni borrado, historial lineal y solo squash merge.
-- **Flujo de cada PR:** rama `feat/`, `fix/`, `chore/` o `docs/` → CI → revisión de un subagente independiente con contexto limpio (máximo 3 rondas) → merge solo con CI verde y `VEREDICTO: APROBADO`.
+- **Flujo de cada PR:** rama `feat/`, `fix/`, `chore/` o `docs/` → CI → revisión de un subagente independiente con contexto limpio (máximo 3 rondas) → merge solo con CI verde y `VEREDICTO: APROBADO`. El merge lo ejecuta el agente que construyó el proyecto (Claude Code) con `gh pr merge --squash --delete-branch` cuando se cumplen ambas condiciones; la protección de `main` impide mergear sin el check `ci`.
 - **Prueba de rollback documentada:**
   1. [#9](https://github.com/Arzule/usd-monitor/pull/9) rompió `/api/health` a propósito, solo en el host de producción.
   2. El [deploy](https://github.com/Arzule/usd-monitor/actions/runs/44935839768) dio: smoke ❌ → `wrangler rollback` ✅ → re-smoke ✅. Workflow en rojo con resumen.
@@ -167,7 +167,7 @@ flowchart TD
   - `setup-d1.yml`: crea la D1 si no existe.
   - `manual-fetch.yml`: lectura forzada.
   - `cron-logs.yml`: `wrangler tail` de los eventos `scheduled`, para verificar el cron.
-  - `connectivity-check.yml`: Fase 0.
+  - `connectivity-check.yml`: Fase 0, verifica Twelve Data (USD/PEN), el token de Cloudflare, D1 y la API del BCRP sin desplegar nada.
 
 ## Skills de diseño usadas
 
@@ -207,14 +207,39 @@ No se cargaron `frontend-design`, `frontend-ui-engineering`, `emil-design-eng` n
 
 ## Validación pendiente (lunes)
 
-Este build se hizo un sábado con el mercado cerrado. El lunes hay que verificar:
+Este build se hizo un sábado con el mercado cerrado. El lunes (después de la apertura del domingo 17:00 NY = 17:00 Lima en horario estándar de EE. UU.) hay que verificar:
 
-1. El cron de 5 min guarda lecturas desde la apertura del domingo 17:00 NY: `/api/live?range=1d` crece cada 5 min.
-2. Los logs pasan de `mercado cerrado, sin llamada` a `[live] guardado …`. Se puede verificar con `cron-logs.yml`.
-3. El cron horario del BCRP agrega el dato del viernes 20 y del lunes, que el sábado figuraban como `n.d.` o aún no estaban publicados.
-4. El filtro de outliers con datos reales: ninguna lectura normal marcada como atípica.
-5. El consumo de créditos en el panel de Twelve Data: unos 12 por hora.
-6. La banda de sesión de Lima (9:00–13:30, según la nota metodológica del BCRP; el 24 y el 31 de diciembre hasta las 12:00). Los feriados peruanos no se excluyen.
+**Logs** (`cron-logs.yml` → _Run workflow_, 6 min):
+
+- Cada 5 min, un evento `cron=*/5 * * * *` con `outcome=ok` y el log `[live] guardado <precio> @ <ts>`. Ya no debe aparecer `mercado cerrado, sin llamada`.
+- Cada hora en punto, `cron=0 * * * MON-FRI` con `[bcrp] ok: N fechas …`.
+- Ningún `[live] falló`, `OUTLIER` inesperado ni `outcome=exception`.
+
+**D1** (desde una máquina con el token, o un workflow ad hoc):
+
+```bash
+npx wrangler d1 execute DB --remote --command "SELECT COUNT(*) n, MIN(ts) desde, MAX(ts) hasta, SUM(is_outlier) atipicos FROM live_rates WHERE ts > unixepoch() - 86400"
+npx wrangler d1 execute DB --remote --command "SELECT COUNT(*) creditos_24h FROM twelve_calls"
+npx wrangler d1 execute DB --remote --command "SELECT * FROM bcrp_rates ORDER BY date DESC LIMIT 3"
+```
+
+Resultado esperado:
+
+- `n` crece unas 12 filas por hora y `atipicos` vale 0 o casi 0.
+- `creditos_24h` es ≤ 288 (+ reintentos) y nunca pasa de 750.
+- Aparecen `2026-11-20` (viernes) y el lunes con compra y venta, ya sin `n.d.`.
+
+**Dashboard** (https://usd-monitor.gcs14.workers.dev):
+
+- La píldora dice _Mercado abierto_ entre 9:00 y 13:30 de Lima y _Fuera de horario en Lima_ fuera de ese tramo, con el forex abierto.
+- El gráfico 1D muestra una línea continua, con un punto cada 5 min, y la banda sombreada de 9:00 a 13:30.
+- _Variación del día_ tiene valor (ya no "Sin lecturas hoy") y _Última actualización_ avanza cada 5 min.
+- La tarjeta BCRP muestra la fecha más reciente.
+- _Mostrar atípicos_ muestra los puntos ✕, si los hay.
+
+**Twelve Data:** el panel de uso muestra unos 12 créditos por hora.
+
+**Horario de sesión:** 9:00–13:30 según la nota metodológica del BCRP. La banda **no** contempla los feriados peruanos ni el cierre anticipado del 24 y el 31 de diciembre (12:00). Ver _Mejoras_.
 
 ## Mejoras sugeridas
 
@@ -226,7 +251,7 @@ Este build se hizo un sábado con el mercado cerrado. El lunes hay que verificar
   - extraer `withGaps` y la lógica de fechas a un módulo ES con tests;
   - que el botón de reintento pase por `safe()`;
   - `aria-live` más acotado;
-  - calendario de feriados para la banda de sesión.
+  - calendario de feriados y cierre anticipado del 24 y 31 de diciembre para la banda de sesión.
 - **MCP:**
   - tests de `get_live_history` con `5d` y `1m`, y de todas las ramas de `explain()`;
   - detectar SSE con `/^data:/m` en el smoke.
