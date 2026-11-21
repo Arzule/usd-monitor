@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const BASE = "https://example.com";
 const get = (path: string, init?: RequestInit) => exports.default.fetch(`${BASE}${path}`, init);
@@ -118,6 +118,28 @@ describe("GET /api/bcrp", () => {
     expect(m.count).toBe(2);
     const y = await (await get("/api/bcrp?range=1y")).json<{ data: { date: string }[] }>();
     expect(y.data.map((r) => r.date)).toEqual([d(200), d(3), d(2)]);
+  });
+});
+
+describe("errores", () => {
+  it("fallo de D1 → 503 JSON con no-store y CORS (no la página 1101)", async () => {
+    vi.spyOn(env.DB, "prepare").mockImplementation(() => {
+      throw new Error("D1_ERROR");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await get("/api/health");
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({ status: "error", error: "unavailable" });
+    vi.restoreAllMocks();
+  });
+
+  it("market_open refleja el horario real", async () => {
+    const { health } = await import("../src/api");
+    const sat = await (await health(env, new Date("2026-11-21T15:00:00Z"))).json();
+    const mon = await (await health(env, new Date("2026-11-23T15:00:00Z"))).json();
+    expect(sat).toMatchObject({ market_open: false });
+    expect(mon).toMatchObject({ market_open: true, lima_session_open: true });
   });
 });
 

@@ -60,6 +60,8 @@ describe("parseQuote", () => {
     expect(err({ status: "error", code: 429, message: "x" })).toMatchObject({ retryable: true });
     expect(err({ status: "error", code: 401, message: "x" })).toMatchObject({ retryable: false });
     expect(err({ close: "n/a", last_quote_at: 1 })).toMatchObject({ retryable: false });
+    expect(err({})).toMatchObject({ retryable: true });
+    expect(err(null)).toMatchObject({ retryable: true });
   });
   it("sin precio → error", () => {
     expect(() => parseQuote({ close: "n/a", last_quote_at: 1 })).toThrow(/precio/);
@@ -138,6 +140,7 @@ describe("ingestLive", () => {
         now: OPEN,
         fetchFn: mockFetch(quote(3.6, t0 + 1500 + k * 300)),
       });
+      expect(r.status).toBe("stored");
       flags.push(r.isOutlier ?? false);
     }
     expect(flags[0]).toBe(true); // el salto inicial se marca

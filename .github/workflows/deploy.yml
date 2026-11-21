@@ -33,6 +33,9 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          # HEAD^ = commit que estaba desplegado: su smoke.sh valida la versión restaurada.
+          fetch-depth: 2
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -137,7 +140,13 @@ jobs:
           bash scripts/redact-log.sh "$RUNNER_TEMP/rollback.log"
           [ "$rc" -eq 0 ] || exit "$rc"
           echo "Re-ejecutando smoke test contra la versión restaurada"
-          bash scripts/smoke.sh "$PROD_URL" "$RUNNER_TEMP/smoke-after-rollback.md"
+          # Se usa el smoke.sh de la versión previa: el del commit nuevo puede exigir
+          # endpoints que la versión restaurada todavía no tiene.
+          if git show HEAD^:scripts/smoke.sh > "$RUNNER_TEMP/smoke-prev.sh" 2>/dev/null; then
+            bash "$RUNNER_TEMP/smoke-prev.sh" "$PROD_URL" "$RUNNER_TEMP/smoke-after-rollback.md"
+          else
+            SMOKE_CHECKS="health home" bash scripts/smoke.sh "$PROD_URL" "$RUNNER_TEMP/smoke-after-rollback.md"
+          fi
 
       - name: Resumen
         if: always()

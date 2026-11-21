@@ -15,7 +15,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Cada check se implementa en una función check_<nombre>.
 # Los endpoints que aún no existen se agregan aquí cuando se implementan.
-CHECKS=(health live_latest bcrp_latest home)
+# SMOKE_CHECKS permite elegir un subconjunto (p. ej. "health home").
+read -ra CHECKS <<<"${SMOKE_CHECKS:-health live_latest bcrp_latest home}"
 
 # http <método> <ruta> [cuerpo] → deja el cuerpo en $TMP/body y devuelve el código HTTP.
 http() {
@@ -39,7 +40,7 @@ json_ok() {
 check_health() {
   local code; code="$(http GET /api/health)"
   [ "$code" = "200" ] || { echo "HTTP $code"; return 1; }
-  json_ok 'b.status === "ok" && typeof b.market_open === "boolean"' || { echo "JSON inválido o status != ok"; return 1; }
+  json_ok 'b.status === "ok" && typeof b.market_open === "boolean"' || { echo "JSON inválido, status != ok o sin market_open"; return 1; }
   echo "200, status ok"
 }
 
@@ -55,7 +56,7 @@ check_live_latest() {
 check_bcrp_latest() {
   local code; code="$(http GET /api/bcrp/latest)"
   [ "$code" = "200" ] || { echo "HTTP $code"; return 1; }
-  json_ok '"data" in b && (b.data === null || /^\d{4}-\d{2}-\d{2}$/.test(b.data.date))' \
+  json_ok '"data" in b && (b.data === null || (/^\d{4}-\d{2}-\d{2}$/.test(b.data.date) && ["compra", "venta"].every((k) => b.data[k] === null || typeof b.data[k] === "number")))' \
     || { echo "forma JSON inesperada"; return 1; }
   echo "200, forma ok"
 }

@@ -2,6 +2,7 @@ import { handleAdminFetch } from "./admin";
 import { bcrpHistory, bcrpLatest, health, liveHistory, liveLatest } from "./api";
 import { runBcrpCron } from "./bcrp/ingest";
 import { runLiveCron } from "./live/ingest";
+import { json } from "./http";
 import { dispatch, type Routes } from "./router";
 
 /** Deben coincidir con [triggers].crons en wrangler.toml (lo verifica un test). */
@@ -19,8 +20,22 @@ const routes: Routes = {
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
-    const res = await dispatch(routes, request, env, ctx);
-    return res ?? env.ASSETS.fetch(request);
+    try {
+      const res = await dispatch(routes, request, env, ctx);
+      return res ?? (await env.ASSETS.fetch(request));
+    } catch (err) {
+      // p. ej. D1 no disponible: JSON 503 en vez de la página de error 1101.
+      console.error(
+        `[http] ${new URL(request.url).pathname}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return json(
+        { status: "error", error: "unavailable" },
+        {
+          status: 503,
+          headers: { "access-control-allow-origin": "*", "cache-control": "no-store" },
+        },
+      );
+    }
   },
 
   async scheduled(controller, env): Promise<void> {
