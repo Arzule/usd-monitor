@@ -1,0 +1,64 @@
+# Crea la base D1 de producción si no existe e imprime su database_id
+# (el id no es secreto: va en wrangler.toml). Idempotente.
+# Se ejecuta manualmente (workflow_dispatch) y también en los PR que modifican
+# este archivo, para poder obtener el id antes de que el workflow exista en main.
+# Los PR desde forks no reciben secrets, así que ahí falla sin efectos.
+name: setup-d1
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/setup-d1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: setup-d1
+  cancel-in-progress: false
+
+env:
+  WRANGLER_VERSION: 4.166.0
+  DB_NAME: usd-monitor
+
+jobs:
+  setup-d1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Crear D1 si no existe
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          find_id() {
+            npx --yes "wrangler@${WRANGLER_VERSION}" d1 list --json 2>/dev/null \
+              | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | (.uuid // .id)'
+          }
+          id="$(find_id)"
+          if [ -z "$id" ]; then
+            echo "La base ${DB_NAME} no existe; creándola."
+            npx --yes "wrangler@${WRANGLER_VERSION}" d1 create "$DB_NAME" > /dev/null
+            id="$(find_id)"
+            created="sí"
+          else
+            created="no (ya existía)"
+          fi
+          if ! [[ "$id" =~ ^[0-9a-f-]{36}$ ]]; then
+            echo "::error::No se pudo obtener un database_id válido para ${DB_NAME}"
+            exit 1
+          fi
+          echo "database_name=${DB_NAME}"
+          echo "database_id=${id}"
+          {
+            echo "## D1"
+            echo "- Base: \`${DB_NAME}\`"
+            echo "- Creada en esta ejecución: ${created}"
+            echo "- database_id: \`${id}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
