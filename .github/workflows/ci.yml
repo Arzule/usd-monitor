@@ -29,3 +29,5 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: Self-test del smoke test (parsers JSON/SSE, sin red)
+        run: bash -n scripts/smoke.sh && bash scripts/smoke.sh --selftest

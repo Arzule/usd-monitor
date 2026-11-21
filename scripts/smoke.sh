@@ -16,7 +16,7 @@ trap 'rm -rf "$TMP"' EXIT
 # Cada check se implementa en una función check_<nombre>.
 # Los endpoints que aún no existen se agregan aquí cuando se implementan.
 # SMOKE_CHECKS permite elegir un subconjunto (p. ej. "health home").
-read -ra CHECKS <<<"${SMOKE_CHECKS:-health live_latest bcrp_latest home}"
+read -ra CHECKS <<<"${SMOKE_CHECKS:-health live_latest bcrp_latest home mcp}"
 
 # http <método> <ruta> [cuerpo] → deja el cuerpo en $TMP/body y devuelve el código HTTP.
 http() {
@@ -60,6 +60,41 @@ check_bcrp_latest() {
     || { echo "forma JSON inesperada"; return 1; }
   echo "200, forma ok"
 }
+
+# MCP: initialize válido (la respuesta puede venir como JSON o como SSE "data: {...}").
+check_mcp() {
+  local init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  local code; code="$(http POST /mcp "$init")"
+  [ "$code" = "200" ] || { echo "HTTP $code"; return 1; }
+  mcp_ok || { echo "respuesta MCP inválida"; return 1; }
+  echo "200, initialize ok"
+}
+
+# Valida $TMP/body como respuesta a initialize (JSON o SSE). Separado para el self-test.
+mcp_ok() {
+  node -e 'const t = require("fs").readFileSync(0, "utf8");
+    const raw = t.includes("data:")
+      ? t.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5)).join("")
+      : t;
+    const b = JSON.parse(raw);
+    process.exit(b.result && b.result.serverInfo && b.result.serverInfo.name === "usd-monitor" ? 0 : 1);' \
+    < "$TMP/body"
+}
+
+# Self-test sin red (lo corre CI): valida los parsers JSON/SSE con fixtures.
+if [ "${BASE}" = "--selftest" ]; then
+  ok=1
+  printf '{"status":"ok","market_open":false}' > "$TMP/body"
+  json_ok 'b.status === "ok" && typeof b.market_open === "boolean"' || ok=0
+  printf 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"usd-monitor"}}}\n\n' > "$TMP/body"
+  mcp_ok || ok=0
+  printf '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"usd-monitor"}}}' > "$TMP/body"
+  mcp_ok || ok=0
+  printf '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"otro"}}}' > "$TMP/body"
+  mcp_ok 2>/dev/null && ok=0
+  [ "$ok" = 1 ] && echo "smoke self-test ok" || { echo "smoke self-test FALLÓ"; exit 1; }
+  exit 0
+fi
 
 check_home() {
   local code; code="$(http GET /)"

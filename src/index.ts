@@ -4,6 +4,7 @@ import { bcrpHistory, bcrpLatest, health, liveHistory, liveLatest } from "./api"
 import { runBcrpCron } from "./bcrp/ingest";
 import { runLiveCron } from "./live/ingest";
 import { json } from "./http";
+import { handleMcp } from "./mcp";
 import { dispatch, type Routes } from "./router";
 
 const routes: Routes = {
@@ -18,6 +19,8 @@ const routes: Routes = {
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     try {
+      // MCP (Streamable HTTP, solo lectura): el handler gestiona sus métodos y CORS.
+      if (new URL(request.url).pathname === "/mcp") return await handleMcp(request, env, ctx);
       const res = await dispatch(routes, request, env, ctx);
       return res ?? (await env.ASSETS.fetch(request));
     } catch (err) {

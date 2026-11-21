@@ -24,7 +24,7 @@ describe("routing", () => {
     expect(await res.json()).toEqual({ error: "method_not_allowed" });
   });
 
-  it.each(["/api/nope", "/admin/nope", "/mcp", "/mcp/x"])(
+  it.each(["/api/nope", "/admin/nope", "/mcp/x"])(
     "%s desconocida responde 404 JSON (no la página HTML)",
     async (path) => {
       const res = await exports.default.fetch(`${BASE}${path}`);
