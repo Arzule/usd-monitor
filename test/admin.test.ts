@@ -112,11 +112,56 @@ describe("POST /admin/fetch", () => {
   });
 });
 
+describe("POST /admin/fetch?source=live", () => {
+  const URL_LIVE = "https://example.com/admin/fetch?source=live";
+  it("sin token → 401 y sin llamar a Twelve Data", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect((await post(URL_LIVE)).status).toBe(401);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("token válido → lectura forzada guardada (aunque el mercado esté cerrado)", async () => {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM live_rates"),
+      env.DB.prepare("DELETE FROM twelve_calls"),
+    ]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ close: "3.38", last_quote_at: 1_800_000_123 })),
+      ),
+    );
+    const res = await post(URL_LIVE, `Bearer ${TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      source: "live",
+      result: { status: "stored" },
+    });
+  });
+
+  it("límite de créditos → 429 con Retry-After", async () => {
+    await env.DB.exec("DELETE FROM twelve_calls");
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.batch(
+      Array.from({ length: 6 }, () =>
+        env.DB.prepare("INSERT INTO twelve_calls (ts) VALUES (?)").bind(now),
+      ),
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const res = await post(URL_LIVE, `Bearer ${TOKEN}`);
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("60");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("scheduled", () => {
   it("las expresiones cron de wrangler.toml tienen handler (CRON_BCRP)", async () => {
-    const { CRON_BCRP, default: worker } = await import("../src/index");
+    const { CRON_BCRP, CRON_LIVE, default: worker } = await import("../src/index");
     const toml = (await import("../wrangler.toml?raw")).default;
-    expect(toml).toContain(`crons = ["${CRON_BCRP}"]`);
+    expect(toml).toContain(`crons = ["${CRON_LIVE}", "${CRON_BCRP}"]`);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));

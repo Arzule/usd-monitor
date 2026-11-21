@@ -1,9 +1,11 @@
 import { handleAdminFetch } from "./admin";
 import { runBcrpCron } from "./bcrp/ingest";
 import { json } from "./http";
+import { runLiveCron } from "./live/ingest";
 import { dispatch, type Routes } from "./router";
 
-/** Debe coincidir con [triggers].crons en wrangler.toml. */
+/** Deben coincidir con [triggers].crons en wrangler.toml (lo verifica un test). */
+export const CRON_LIVE = "*/5 * * * *";
 export const CRON_BCRP = "0 * * * MON-FRI";
 
 const routes: Routes = {
@@ -19,6 +21,9 @@ export default {
 
   async scheduled(controller, env): Promise<void> {
     switch (controller.cron) {
+      case CRON_LIVE:
+        await runLiveCron(env, controller.scheduledTime);
+        break;
       case CRON_BCRP:
         await runBcrpCron(env, new Date(controller.scheduledTime));
         break;

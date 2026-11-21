@@ -15,18 +15,22 @@ export class FetchJsonError extends Error {
   constructor(
     message: string,
     readonly status: number | null,
+    readonly retryable = true,
   ) {
     super(message);
     this.name = "FetchJsonError";
   }
 }
 
+const USER_AGENT = "usd-monitor/1.0 (+https://usd-monitor.gcs14.workers.dev)";
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /**
  * GET con timeout y un reintento ante errores transitorios (red, timeout, 429, 5xx,
  * cuerpo vacío o JSON inválido). Errores 4xx no transitorios no se reintentan.
- * La URL nunca debe contener credenciales: se escribe en los logs.
+ * Las URLs no deben contener credenciales (pueden aparecer en errores y logs).
+ * Se envía un User-Agent propio: sin él, algunos WAF (p. ej. el del BCRP) responden
+ * con una página HTML en lugar del JSON.
  */
 export async function fetchJson(
   url: string,
@@ -42,19 +46,22 @@ export async function fetchJson(
     try {
       const res = await fetchFn(url, {
         ...init,
+        headers: { "user-agent": USER_AGENT, ...Object.fromEntries(new Headers(init.headers)) },
         signal: AbortSignal.timeout(opts.timeoutMs ?? 10_000),
       });
       const text = await res.text();
       if (!res.ok) {
-        lastError = new FetchJsonError(`HTTP ${String(res.status)}`, res.status);
         retryable = RETRYABLE_STATUS.has(res.status);
+        lastError = new FetchJsonError(`HTTP ${String(res.status)}`, res.status, retryable);
       } else if (text.trim() === "") {
         lastError = new FetchJsonError("respuesta vacía", res.status);
       } else {
         try {
           return JSON.parse(text) as unknown;
         } catch {
-          lastError = new FetchJsonError("JSON inválido", res.status);
+          const type = res.headers.get("content-type") ?? "?";
+          const snippet = text.slice(0, 60).replace(/\s+/g, " ");
+          lastError = new FetchJsonError(`JSON inválido (${type}): ${snippet}`, res.status);
         }
       }
     } catch (err) {

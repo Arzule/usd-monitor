@@ -12,7 +12,11 @@ export default defineConfig(async () => {
         wrangler: { configPath: "./wrangler.toml" },
         miniflare: {
           // ADMIN_TOKEN de prueba (no es un secret real); TEST_MIGRATIONS para la D1 de test.
-          bindings: { TEST_MIGRATIONS: migrations, ADMIN_TOKEN: "test-admin-token" },
+          bindings: {
+            TEST_MIGRATIONS: migrations,
+            ADMIN_TOKEN: "test-admin-token",
+            TWELVE_DATA_API_KEY: "test-twelve-key",
+          },
         },
       }),
     ],

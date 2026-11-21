@@ -20,12 +20,20 @@ database_id = "3659826b-26e1-4b28-abd1-e018acf616a9"
 migrations_dir = "migrations"
 
 # Cron Triggers (UTC). El plan Free permite 5 por cuenta; usamos 2 en total.
-# BCRP: cada hora en días hábiles (debe coincidir con CRON_BCRP en src/index.ts).
+# Expresiones en UTC; deben coincidir con CRON_LIVE / CRON_BCRP en src/index.ts.
+# - Live: cada 5 min (omite la llamada con el mercado forex cerrado).
+# - BCRP: cada hora de lunes a viernes UTC (≈ días hábiles en Lima; la ventana de 10 días cubre el desfase).
 [triggers]
-crons = ["0 * * * MON-FRI"]
+crons = ["*/5 * * * *", "0 * * * MON-FRI"]
 
 [observability]
 enabled = true
 
 [vars]
 TWELVE_DATA_SYMBOL = "USD/PEN"
+# Filtro de anomalías: desvío relativo máximo vs. la mediana de las últimas N lecturas válidas.
+OUTLIER_THRESHOLD = "0.01"
+OUTLIER_WINDOW = "12"
+OUTLIER_MIN_SAMPLES = "5"
+# Solo lecturas de las últimas 2 h entran en la mediana (re-anclaje tras un cambio de nivel).
+OUTLIER_MAX_AGE_SECONDS = "7200"
