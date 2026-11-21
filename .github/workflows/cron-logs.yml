@@ -1,0 +1,58 @@
+# Verifica los Cron Triggers en producción: escucha los eventos del Worker con
+# `wrangler tail` durante ~6 min (cubre al menos una ejecución del cron de 5 min)
+# y resume los eventos `scheduled` y sus logs. Solo lectura.
+name: cron-logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutos de escucha (máx. 15)"
+        default: "6"
+
+permissions:
+  contents: read
+
+jobs:
+  tail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: wrangler tail (eventos scheduled)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          set -uo pipefail
+          m="${MINUTES:-6}"
+          # 1–15 en decimal (evita 0 = sin límite y 08/09 leídos como octal).
+          [[ "$m" =~ ^[1-9][0-9]?$ ]] && [ "$((10#$m))" -le 15 ] || m=6
+          timeout "$((10#$m * 60))" npx wrangler tail --format json \
+            > "$RUNNER_TEMP/tail.jsonl" 2> "$RUNNER_TEMP/tail.err" || true
+          # Solo eventos scheduled: cron, hora, resultado, logs y excepciones (sin cabeceras ni IPs).
+          jq -rc 'select(.event.cron != null) |
+            "\(.eventTimestamp / 1000 | todate) cron=\(.event.cron) outcome=\(.outcome) logs=\([.logs[]?.message[]?] | join(" | ")) exceptions=\([.exceptions[]?.message] | join(" | "))"' \
+            "$RUNNER_TEMP/tail.jsonl" > "$RUNNER_TEMP/scheduled.raw" || true
+          bash scripts/redact-log.sh "$RUNNER_TEMP/scheduled.raw" > "$RUNNER_TEMP/scheduled.txt"
+          cat "$RUNNER_TEMP/scheduled.txt"
+          n=$(wc -l < "$RUNNER_TEMP/scheduled.txt")
+          {
+            echo "## Cron en producción (${m} min de escucha)"
+            echo "Eventos scheduled: ${n}"
+            echo '```'
+            cat "$RUNNER_TEMP/scheduled.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$n" -eq 0 ]; then
+            echo "stderr de wrangler tail (redactado):"
+            bash scripts/redact-log.sh "$RUNNER_TEMP/tail.err" | tail -20
+            echo "::error::No se observó ningún evento scheduled"
+            exit 1
+          fi
