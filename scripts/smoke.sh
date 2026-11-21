@@ -15,7 +15,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Cada check se implementa en una función check_<nombre>.
 # Los endpoints que aún no existen se agregan aquí cuando se implementan.
-CHECKS=(health home)
+CHECKS=(health live_latest bcrp_latest home)
 
 # http <método> <ruta> [cuerpo] → deja el cuerpo en $TMP/body y devuelve el código HTTP.
 http() {
@@ -39,8 +39,25 @@ json_ok() {
 check_health() {
   local code; code="$(http GET /api/health)"
   [ "$code" = "200" ] || { echo "HTTP $code"; return 1; }
-  json_ok 'b.status === "ok"' || { echo "JSON inválido o status != ok"; return 1; }
+  json_ok 'b.status === "ok" && typeof b.market_open === "boolean"' || { echo "JSON inválido o status != ok"; return 1; }
   echo "200, status ok"
+}
+
+# /latest puede venir vacío (data: null): se valida la forma, no que haya datos.
+check_live_latest() {
+  local code; code="$(http GET /api/live/latest)"
+  [ "$code" = "200" ] || { echo "HTTP $code"; return 1; }
+  json_ok '"data" in b && (b.data === null || (typeof b.data.price === "number" && typeof b.data.ts === "number"))' \
+    || { echo "forma JSON inesperada"; return 1; }
+  echo "200, forma ok"
+}
+
+check_bcrp_latest() {
+  local code; code="$(http GET /api/bcrp/latest)"
+  [ "$code" = "200" ] || { echo "HTTP $code"; return 1; }
+  json_ok '"data" in b && (b.data === null || /^\d{4}-\d{2}-\d{2}$/.test(b.data.date))' \
+    || { echo "forma JSON inesperada"; return 1; }
+  echo "200, forma ok"
 }
 
 check_home() {

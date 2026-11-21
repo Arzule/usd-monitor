@@ -43,10 +43,10 @@ export function parseQuote(body: unknown): Quote {
   // las lecturas del día parezcan duplicadas.
   const ts = typeof b.last_quote_at === "number" ? b.last_quote_at : NaN;
   if (!Number.isFinite(price) || price <= 0) {
-    throw new TwelveDataError("respuesta sin precio válido", true);
+    throw new TwelveDataError("respuesta sin precio válido", false);
   }
   if (!Number.isInteger(ts) || ts <= 0) {
-    throw new TwelveDataError("respuesta sin last_quote_at", true);
+    throw new TwelveDataError("respuesta sin last_quote_at", false);
   }
   return { ts, price };
 }

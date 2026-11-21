@@ -48,8 +48,18 @@ describe("parseQuote", () => {
   it("usa last_quote_at y convierte close", () => {
     expect(parseQuote(quote(3.38, 1_800_000_000))).toEqual({ ts: 1_800_000_000, price: 3.38 });
   });
-  it("error de API con HTTP 200 → reintentable si es 429", () => {
-    expect(() => parseQuote({ status: "error", code: 429, message: "x" })).toThrow(/429/);
+  it("error de API con HTTP 200 → reintentable solo si es transitorio", () => {
+    const err = (b: unknown) => {
+      try {
+        parseQuote(b);
+      } catch (e) {
+        return e as { retryable: boolean; message: string };
+      }
+      throw new Error("no lanzó");
+    };
+    expect(err({ status: "error", code: 429, message: "x" })).toMatchObject({ retryable: true });
+    expect(err({ status: "error", code: 401, message: "x" })).toMatchObject({ retryable: false });
+    expect(err({ close: "n/a", last_quote_at: 1 })).toMatchObject({ retryable: false });
   });
   it("sin precio → error", () => {
     expect(() => parseQuote({ close: "n/a", last_quote_at: 1 })).toThrow(/precio/);
@@ -106,26 +116,44 @@ describe("ingestLive", () => {
     expect(row).toEqual({ is_outlier: 1 });
   });
 
-  it("cambio de nivel real: deja de marcar cuando las lecturas viejas salen de la ventana (2 h)", async () => {
-    quiet();
-    const t0 = 1_800_000_000;
+  async function seedValid(t0: number, prices: number[]) {
     await env.DB.batch(
-      [3.4, 3.41, 3.39, 3.4, 3.405].map((p, i) =>
+      prices.map((p, i) =>
         env.DB.prepare("INSERT INTO live_rates (ts, price, source) VALUES (?, ?, 't')").bind(
           t0 + i * 300,
           p,
         ),
       ),
     );
-    // Salta a 3.6 y se queda ahí: al principio es outlier...
-    const first = await ingestLive(env, { now: OPEN, fetchFn: mockFetch(quote(3.6, t0 + 1800)) });
-    expect(first.isOutlier).toBe(true);
-    // ...pero 2 h después del último dato válido ya no hay muestra vieja: arranque, no se marca.
-    const later = await ingestLive(env, {
-      now: OPEN,
-      fetchFn: mockFetch(quote(3.6, t0 + 1200 + 7300)),
-    });
-    expect(later).toMatchObject({ status: "stored", isOutlier: false, median: null });
+  }
+
+  it("cambio de nivel sostenido: se re-ancla en ≤ 2 h de lecturas al nuevo nivel", async () => {
+    quiet();
+    const t0 = 1_800_000_000;
+    await seedValid(t0, [3.4, 3.41, 3.39, 3.4, 3.405]);
+    const flags: boolean[] = [];
+    for (let k = 0; k < 30; k++) {
+      await env.DB.exec("DELETE FROM twelve_calls"); // el límite de créditos no es lo que se prueba
+      const r = await ingestLive(env, {
+        now: OPEN,
+        fetchFn: mockFetch(quote(3.6, t0 + 1500 + k * 300)),
+      });
+      flags.push(r.isOutlier ?? false);
+    }
+    expect(flags[0]).toBe(true); // el salto inicial se marca
+    const firstValid = flags.indexOf(false);
+    expect(firstValid).toBeGreaterThan(0);
+    expect(firstValid).toBeLessThanOrEqual(25); // 25 × 5 min ≈ 2 h
+    expect(flags.slice(firstValid).every((f) => !f)).toBe(true); // y no vuelve a marcar
+  });
+
+  it("tras el fin de semana la muestra del viernes sigue vigente (no vuelve a arranque)", async () => {
+    quiet();
+    const t0 = 1_800_000_000;
+    await seedValid(t0, [3.4, 3.41, 3.39, 3.4, 3.405]);
+    const monday = t0 + 1200 + 48 * 3600;
+    const r = await ingestLive(env, { now: OPEN, fetchFn: mockFetch(quote(3.6, monday)) });
+    expect(r).toMatchObject({ isOutlier: true, median: 3.4 });
   });
 
   it("parseQuote exige last_quote_at (timestamp es el inicio de la vela diaria)", () => {

@@ -1,6 +1,6 @@
 import { handleAdminFetch } from "./admin";
+import { bcrpHistory, bcrpLatest, health, liveHistory, liveLatest } from "./api";
 import { runBcrpCron } from "./bcrp/ingest";
-import { json } from "./http";
 import { runLiveCron } from "./live/ingest";
 import { dispatch, type Routes } from "./router";
 
@@ -9,7 +9,11 @@ export const CRON_LIVE = "*/5 * * * *";
 export const CRON_BCRP = "0 * * * MON-FRI";
 
 const routes: Routes = {
-  "/api/health": { GET: () => json({ status: "ok" }) },
+  "/api/health": { GET: (_req, env) => health(env) },
+  "/api/live/latest": { GET: (_req, env) => liveLatest(env) },
+  "/api/live": { GET: (_req, env, _ctx, url) => liveHistory(env, url) },
+  "/api/bcrp/latest": { GET: (_req, env) => bcrpLatest(env) },
+  "/api/bcrp": { GET: (_req, env, _ctx, url) => bcrpHistory(env, url) },
   "/admin/fetch": { POST: (req, env, _ctx, url) => handleAdminFetch(req, env, url) },
 };
 
