@@ -219,7 +219,7 @@ Este build se hizo un sábado con el mercado cerrado. El lunes (después de la a
 
 ```bash
 npx wrangler d1 execute DB --remote --command "SELECT COUNT(*) n, MIN(ts) desde, MAX(ts) hasta, SUM(is_outlier) atipicos FROM live_rates WHERE ts > unixepoch() - 86400"
-npx wrangler d1 execute DB --remote --command "SELECT COUNT(*) creditos_24h FROM twelve_calls"
+npx wrangler d1 execute DB --remote --command "SELECT COUNT(*) creditos_24h FROM twelve_calls WHERE ts > unixepoch() - 86400"
 npx wrangler d1 execute DB --remote --command "SELECT * FROM bcrp_rates ORDER BY date DESC LIMIT 3"
 ```
 
@@ -227,7 +227,7 @@ Resultado esperado:
 
 - `n` crece unas 12 filas por hora y `atipicos` vale 0 o casi 0.
 - `creditos_24h` es ≤ 288 (+ reintentos) y nunca pasa de 750.
-- Aparecen `2026-11-20` (viernes) y el lunes con compra y venta, ya sin `n.d.`.
+- Aparece `2026-11-20` (viernes) con compra y venta, ya sin `n.d.`. El BCRP publica el dato del día al cierre, así que el del lunes recién aparece al final de la tarde o el martes.
 
 **Dashboard** (https://usd-monitor.gcs14.workers.dev):
 
