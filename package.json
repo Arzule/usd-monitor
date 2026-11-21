@@ -1,0 +1,30 @@
+{
+  "name": "usd-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monitor USD/PEN en tiempo real (Twelve Data) y oficial (BCRP) en Cloudflare Workers + D1, con API REST y servidor MCP.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.9.0",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
+  }
+}

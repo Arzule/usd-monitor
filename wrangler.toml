@@ -1,0 +1,19 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "usd-monitor"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Dashboard estático servido por el mismo Worker. Las rutas dinámicas pasan
+# primero por el Worker; todo lo demás lo sirve el binding de assets.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "404-page"
+run_worker_first = ["/api/*", "/mcp", "/mcp/*", "/admin/*"]
+
+[observability]
+enabled = true
+
+[vars]
+TWELVE_DATA_SYMBOL = "USD/PEN"
