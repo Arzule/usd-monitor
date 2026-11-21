@@ -10,7 +10,7 @@
   --series-2: #eb6834;
   --critical: #d03b3b;
   --good: #0ca30c;
-  --band: rgba(42, 120, 214, 0.07);
+  --band: rgba(42, 120, 214, 0.14);
   --focus: #2a78d6;
   --radius: 12px;
   color-scheme: light;
@@ -132,6 +132,9 @@ h1 {
 }
 .pill[data-state="open"] .dot {
   background: var(--good);
+}
+.pill[data-state="off"] .dot {
+  background: #eda100;
 }
 .pill[data-state="closed"] .dot {
   background: var(--critical);

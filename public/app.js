@@ -35,10 +35,20 @@ const fmtDate = new Intl.DateTimeFormat("es-PE", {
 });
 const pen = (v, d = 4) => (typeof v === "number" ? `S/ ${v.toFixed(d)}` : "—");
 const $ = (id) => document.getElementById(id);
+const sign = (v) => (v > 0 ? "+" : v < 0 ? "−" : "");
+const signed = (abs, pct) =>
+  `${sign(abs)}${Math.abs(abs).toFixed(4)} (${sign(pct)}${Math.abs(pct).toFixed(2)} %)`;
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const dateToMs = (d) => Date.parse(`${d}T00:00:00Z`);
 
-const state = { liveRange: "1d", bcrpRange: "6m", outliers: false, charts: {}, timer: null };
+const state = {
+  liveRange: "1d",
+  bcrpRange: "6m",
+  outliers: false,
+  charts: {},
+  timer: null,
+  seq: { live: 0, bcrp: 0 },
+};
 
 async function getJson(path) {
   const res = await fetch(path, { headers: { accept: "application/json" } });
@@ -105,7 +115,9 @@ function baseOptions(xFormatter, tooltipTitle, xRange, stepSec) {
     animation: window.matchMedia("(prefers-reduced-motion: reduce)").matches
       ? false
       : { duration: 250 },
-    interaction: { mode: "index", intersect: false },
+    // "nearest" en x: cada serie aporta su punto más cercano a la misma hora/fecha
+    // (con "index" se mezclaban puntos de distintas fechas entre series).
+    interaction: { mode: "nearest", axis: "x", intersect: false },
     scales: {
       x: {
         type: "linear",
@@ -119,7 +131,8 @@ function baseOptions(xFormatter, tooltipTitle, xRange, stepSec) {
       y: {
         grid: { color: grid },
         border: { display: false },
-        ticks: { color: ink2, callback: (v) => Number(v).toFixed(3) },
+        title: { display: true, text: "S/ por US$", color: ink2 },
+        ticks: { color: ink2, callback: (v) => Number(v).toFixed(4) },
       },
     },
     plugins: {
@@ -131,14 +144,28 @@ function baseOptions(xFormatter, tooltipTitle, xRange, stepSec) {
       tooltip: {
         callbacks: {
           title: (items) => (items[0] ? tooltipTitle(items[0].parsed.x) : ""),
-          label: (item) => ` ${item.dataset.label}: ${pen(item.parsed.y)}`,
+          label: (item) =>
+            item.parsed.y === null
+              ? ` ${item.dataset.label}: n.d.`
+              : ` ${item.dataset.label}: ${pen(item.parsed.y)}`,
         },
       },
     },
   };
 }
 
-function lineDataset(label, color, data) {
+/** Inserta un null donde falten datos (> maxGapMs) para no unir con una recta los huecos. */
+function withGaps(points, maxGapMs) {
+  const out = [];
+  for (const p of points) {
+    const prev = out[out.length - 1];
+    if (prev && prev.y !== null && p.x - prev.x > maxGapMs) out.push({ x: prev.x + 1, y: null });
+    out.push(p);
+  }
+  return out;
+}
+
+function lineDataset(label, color, data, dash) {
   return {
     label,
     data,
@@ -151,6 +178,7 @@ function lineDataset(label, color, data) {
     pointHoverBorderColor: css("--surface"),
     tension: 0,
     spanGaps: false,
+    borderDash: dash ?? [],
   };
 }
 
@@ -169,10 +197,12 @@ function renderTable(id, head, rows) {
 
 // ---------- Gráfico en vivo ----------
 async function loadLive() {
+  const seq = ++state.seq.live; // descarta respuestas viejas si el usuario cambió de rango
   const q = `range=${state.liveRange}${state.outliers ? "&include_outliers=true" : ""}`;
   let body;
   try {
     body = await getJson(`/api/live?${q}`);
+    if (seq !== state.seq.live) return true;
   } catch {
     showState(
       "live-state",
@@ -181,12 +211,17 @@ async function loadLive() {
     );
     return false;
   }
-  const valid = body.data.map((d) => ({ x: d.ts * 1000, y: d.price }));
+  // Hueco > 3 intervalos (15 min en 1D/5D, 3 h en 1M) → se corta la línea.
+  const gap = state.liveRange === "1m" ? 3 * 3600_000 : 15 * 60_000;
+  const valid = withGaps(
+    body.data.map((d) => ({ x: d.ts * 1000, y: d.price })),
+    gap,
+  );
   const out = (body.outliers ?? []).map((d) => ({ x: d.ts * 1000, y: d.price }));
-  if (valid.length === 0 && out.length === 0) {
+  if (body.data.length === 0 && out.length === 0) {
     showState(
       "live-state",
-      "<strong>Aún no hay lecturas en este rango.</strong><span>El mercado forex abre el domingo a las 17:00 de Nueva York; la primera lectura llegará en los 5 minutos siguientes.</span>",
+      "<strong>Aún no hay lecturas en este rango.</strong><span>Las lecturas se toman cada 5 minutos mientras el mercado forex está abierto (de domingo 17:00 a viernes 17:00, hora de Nueva York).</span>",
     );
   } else hideState("live-state");
 
@@ -221,7 +256,10 @@ async function loadLive() {
     plugins: [sessionBand],
   });
 
-  const rows = [...valid.map((p) => [p, "válido"]), ...out.map((p) => [p, "atípico"])]
+  const rows = [
+    ...valid.filter((p) => p.y !== null).map((p) => [p, "válido"]),
+    ...out.map((p) => [p, "atípico"]),
+  ]
     .sort((a, b) => b[0].x - a[0].x)
     .map(([p, kind]) => [fmtFull.format(p.x), p.y.toFixed(4), kind]);
   renderTable("live-table", ["Fecha y hora (Lima)", "Precio (S/)", "Estado"], rows);
@@ -230,9 +268,11 @@ async function loadLive() {
 
 // ---------- Gráfico BCRP ----------
 async function loadBcrp() {
+  const seq = ++state.seq.bcrp;
   let body;
   try {
     body = await getJson(`/api/bcrp?range=${state.bcrpRange}`);
+    if (seq !== state.seq.bcrp) return true;
   } catch {
     showState(
       "bcrp-state",
@@ -247,11 +287,11 @@ async function loadBcrp() {
       "<strong>Sin datos del BCRP en este rango.</strong><span>El BCRP publica en días hábiles.</span>",
     );
   } else hideState("bcrp-state");
-  const pts = (k) =>
-    body.data.filter((d) => d[k] !== null).map((d) => ({ x: dateToMs(d.date), y: d[k] }));
+  // Se conservan los null (n.d.) para que compra y venta queden alineadas por fecha.
+  const pts = (k) => body.data.map((d) => ({ x: dateToMs(d.date), y: d[k] }));
   const datasets = [
     lineDataset("Compra", css("--series-1"), pts("compra")),
-    lineDataset("Venta", css("--series-2"), pts("venta")),
+    lineDataset("Venta", css("--series-2"), pts("venta"), [6, 3]), // trazo distinto: no solo color
   ];
   const dayFmt = new Intl.DateTimeFormat("es-PE", {
     timeZone: "UTC",
@@ -286,16 +326,26 @@ async function loadSummary() {
   ]);
   const live = health.last_live;
   const pill = $("market");
-  pill.dataset.state = health.market_open ? "open" : "closed";
-  $("market-text").textContent = health.market_open ? "Mercado abierto" : "Mercado cerrado";
-
   const banner = $("banner");
   if (!health.market_open) {
+    pill.dataset.state = "closed";
+    $("market-text").textContent = "Mercado cerrado";
     banner.hidden = false;
     banner.dataset.kind = "closed";
     banner.textContent =
-      "Mercado cerrado: el forex global cierra del viernes 17:00 al domingo 17:00 (hora de Nueva York). Se muestra la última lectura disponible.";
-  } else banner.hidden = true;
+      "Mercado cerrado: el forex global no opera desde el viernes a las 16:00 hasta el domingo a las 16:00 (hora de Lima; 17:00 en Nueva York). Se muestra la última lectura disponible.";
+  } else if (!health.lima_session_open) {
+    pill.dataset.state = "off";
+    $("market-text").textContent = "Fuera de horario en Lima";
+    banner.hidden = false;
+    banner.dataset.kind = "closed";
+    banner.textContent =
+      "Fuera del horario interbancario de Lima (lunes a viernes, 9:00–13:30). El forex global sigue abierto y las lecturas en vivo continúan.";
+  } else {
+    pill.dataset.state = "open";
+    $("market-text").textContent = "Mercado abierto";
+    banner.hidden = true;
+  }
 
   $("c-live").textContent = pen(live?.price);
   $("c-live-at").textContent = live
@@ -309,7 +359,7 @@ async function loadSummary() {
   ch.classList.remove("up", "down");
   if (live && first && live.ts >= startOfDay) {
     const diff = live.price - first.price;
-    ch.textContent = `${diff >= 0 ? "+" : "−"}${Math.abs(diff).toFixed(4)} (${((diff / first.price) * 100).toFixed(2)}%)`;
+    ch.textContent = signed(diff, (diff / first.price) * 100);
     if (diff !== 0) ch.classList.add(diff > 0 ? "up" : "down");
     $("c-change-hint").textContent =
       `Desde ${fmtTime.format(first.ts * 1000)} (primera lectura de hoy)`;
@@ -326,12 +376,21 @@ async function loadSummary() {
   const d = $("c-diff");
   if (live && typeof b?.venta === "number") {
     const diff = live.price - b.venta;
-    d.textContent = `${diff >= 0 ? "+" : "−"}${Math.abs(diff).toFixed(4)} (${((diff / b.venta) * 100).toFixed(2)}%)`;
+    d.textContent = signed(diff, (diff / b.venta) * 100);
   } else d.textContent = "—";
 }
 
 async function refreshAll() {
-  const results = await Promise.allSettled([loadSummary(), loadLive(), loadBcrp()]);
+  const guard = (fn, stateId) =>
+    fn().catch((err) => {
+      if (stateId) showState(stateId, "<strong>Error al mostrar los datos.</strong>", fn);
+      throw err;
+    });
+  const results = await Promise.allSettled([
+    loadSummary(),
+    guard(loadLive, "live-state"),
+    guard(loadBcrp, "bcrp-state"),
+  ]);
   const failed = results.some((r) => r.status === "rejected" || r.value === false);
   const banner = $("banner");
   if (results[0].status === "rejected") {

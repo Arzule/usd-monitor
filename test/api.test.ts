@@ -135,6 +135,7 @@ describe("errores", () => {
     expect(res.status).toBe(503);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual({ status: "error", error: "unavailable" });
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });
 
   it("market_open refleja el horario real", async () => {
