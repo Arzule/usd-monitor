@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+*.log
+.DS_Store
+
+# Artefactos locales de herramientas (Claude Code / Skipper), nunca se versionan
+.claude/
+.skipper/
