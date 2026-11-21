@@ -1,6 +1,7 @@
 import { createScheduledController } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import worker, { CRON_LIVE } from "../src/index";
+import { CRON_LIVE } from "../src/crons";
+import worker from "../src/index";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CREDITS_PER_DAY,

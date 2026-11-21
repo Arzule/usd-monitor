@@ -1,13 +1,10 @@
+import { CRON_BCRP, CRON_LIVE } from "./crons";
 import { handleAdminFetch } from "./admin";
 import { bcrpHistory, bcrpLatest, health, liveHistory, liveLatest } from "./api";
 import { runBcrpCron } from "./bcrp/ingest";
 import { runLiveCron } from "./live/ingest";
 import { json } from "./http";
 import { dispatch, type Routes } from "./router";
-
-/** Deben coincidir con [triggers].crons en wrangler.toml (lo verifica un test). */
-export const CRON_LIVE = "*/5 * * * *";
-export const CRON_BCRP = "0 * * * MON-FRI";
 
 const routes: Routes = {
   "/api/health": { GET: (_req, env) => health(env) },
@@ -32,7 +29,13 @@ export default {
         { status: "error", error: "unavailable" },
         {
           status: 503,
-          headers: { "access-control-allow-origin": "*", "cache-control": "no-store" },
+          headers: {
+            "cache-control": "no-store",
+            // CORS solo en la API pública (no en /admin ni en los assets).
+            ...(new URL(request.url).pathname.startsWith("/api/")
+              ? { "access-control-allow-origin": "*" }
+              : {}),
+          },
         },
       );
     }

@@ -4,9 +4,143 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>USD/PEN Monitor</title>
+    <meta
+      name="description"
+      content="Tipo de cambio USD/PEN en vivo (Twelve Data) y tipo de cambio interbancario oficial del BCRP."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script
+      defer
+      src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+      integrity="sha512-CQBWl4fJHWbryGE+Pc7UAxWMUMNMWzWxF4SQo9CgkJIN1kx6djDQZjh3Y8SZ1d+6I+1zze6Z7kHXO7q3UyZAWw=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+    <script defer src="/app.js"></script>
   </head>
   <body>
-    <h1>USD/PEN Monitor</h1>
-    <p>En construcción.</p>
+    <a class="skip" href="#main">Saltar al contenido</a>
+    <header class="top">
+      <div>
+        <h1>USD/PEN Monitor</h1>
+        <p class="sub">
+          Dólar en soles: cotización en vivo y tipo de cambio oficial del BCRP · hora de Lima
+        </p>
+      </div>
+      <div class="meta" aria-live="polite">
+        <span id="market" class="pill" data-state="unknown">
+          <span class="dot" aria-hidden="true"></span
+          ><span id="market-text">Consultando mercado…</span>
+        </span>
+        <span id="updated" class="muted">Última actualización: —</span>
+      </div>
+    </header>
+
+    <main id="main">
+      <div id="banner" class="banner" hidden role="status"></div>
+
+      <section class="cards" aria-label="Resumen">
+        <article class="card">
+          <h2>Precio en vivo</h2>
+          <p class="value" id="c-live">—</p>
+          <p class="hint" id="c-live-at">Sin lecturas todavía</p>
+        </article>
+        <article class="card">
+          <h2>Variación del día</h2>
+          <p class="value" id="c-change">—</p>
+          <p class="hint" id="c-change-hint">Desde la primera lectura de hoy</p>
+        </article>
+        <article class="card">
+          <h2>BCRP oficial</h2>
+          <p class="value value-pair">
+            <span><small>Compra</small> <span id="c-compra">—</span></span>
+            <span><small>Venta</small> <span id="c-venta">—</span></span>
+          </p>
+          <p class="hint" id="c-bcrp-date">—</p>
+        </article>
+        <article class="card">
+          <h2>Vivo vs. oficial</h2>
+          <p class="value" id="c-diff">—</p>
+          <p class="hint">Precio en vivo − venta BCRP</p>
+        </article>
+      </section>
+
+      <section class="panel" aria-labelledby="live-title">
+        <div class="panel-head">
+          <div>
+            <h2 id="live-title">Cotización en vivo</h2>
+            <p class="muted small">
+              Twelve Data, cada 5 min. <span class="band-key" aria-hidden="true"></span> Sesión
+              interbancaria de Lima (9:00–13:30).
+            </p>
+          </div>
+          <div class="controls">
+            <div
+              class="seg"
+              role="group"
+              aria-label="Rango de la cotización en vivo"
+              data-target="live"
+            >
+              <button type="button" data-range="1d" aria-pressed="true">1D</button>
+              <button type="button" data-range="5d" aria-pressed="false">5D</button>
+              <button type="button" data-range="1m" aria-pressed="false">1M</button>
+            </div>
+            <label class="toggle"><input type="checkbox" id="outliers" /> Mostrar atípicos</label>
+          </div>
+        </div>
+        <div class="chart-wrap" id="live-wrap">
+          <canvas
+            id="live-chart"
+            role="img"
+            aria-label="Gráfico de la cotización USD/PEN en vivo"
+          ></canvas>
+          <div class="state" id="live-state" hidden></div>
+        </div>
+        <details class="table-view">
+          <summary>Ver datos en tabla</summary>
+          <div class="table-scroll"><table id="live-table"></table></div>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="bcrp-title">
+        <div class="panel-head">
+          <div>
+            <h2 id="bcrp-title">Tipo de cambio oficial BCRP</h2>
+            <p class="muted small">Interbancario compra y venta, un valor por día hábil.</p>
+          </div>
+          <div class="controls">
+            <div
+              class="seg"
+              role="group"
+              aria-label="Rango del tipo de cambio BCRP"
+              data-target="bcrp"
+            >
+              <button type="button" data-range="1m" aria-pressed="false">1M</button>
+              <button type="button" data-range="6m" aria-pressed="true">6M</button>
+              <button type="button" data-range="1y" aria-pressed="false">1Y</button>
+            </div>
+          </div>
+        </div>
+        <div class="chart-wrap" id="bcrp-wrap">
+          <canvas
+            id="bcrp-chart"
+            role="img"
+            aria-label="Gráfico del tipo de cambio oficial BCRP, compra y venta"
+          ></canvas>
+          <div class="state" id="bcrp-state" hidden></div>
+        </div>
+        <details class="table-view">
+          <summary>Ver datos en tabla</summary>
+          <div class="table-scroll"><table id="bcrp-table"></table></div>
+        </details>
+      </section>
+    </main>
+
+    <footer class="foot muted small">
+      Fuentes: <a href="https://twelvedata.com">Twelve Data</a> (USD/PEN) y
+      <a href="https://estadisticas.bcrp.gob.pe">BCRP</a> (series PD04637PD y PD04638PD). Datos
+      informativos, no constituyen asesoría financiera. API pública en <code>/api/health</code>.
+    </footer>
   </body>
 </html>
