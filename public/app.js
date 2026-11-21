@@ -172,7 +172,14 @@ function lineDataset(label, color, data, dash) {
     borderColor: color,
     backgroundColor: color,
     borderWidth: 2,
-    pointRadius: data.length === 1 ? 5 : 0, // con un solo dato, mostrar el punto
+    // Un punto sin vecinos (dato aislado entre huecos, o único dato) no forma línea:
+    // se dibuja como marcador para que nunca quede invisible.
+    pointRadius: (c) => {
+      const d = c.dataset.data;
+      const i = c.dataIndex;
+      const isolated = (d[i - 1]?.y ?? null) === null && (d[i + 1]?.y ?? null) === null;
+      return d[i]?.y !== null && isolated ? 4 : 0;
+    },
     pointHoverRadius: 5,
     pointHoverBorderWidth: 2,
     pointHoverBorderColor: css("--surface"),
@@ -204,6 +211,7 @@ async function loadLive() {
     body = await getJson(`/api/live?${q}`);
     if (seq !== state.seq.live) return true;
   } catch {
+    if (seq !== state.seq.live) return true; // error de una petición ya descartada
     showState(
       "live-state",
       "<strong>No se pudo cargar la cotización.</strong><span>Revisa tu conexión.</span>",
@@ -274,6 +282,7 @@ async function loadBcrp() {
     body = await getJson(`/api/bcrp?range=${state.bcrpRange}`);
     if (seq !== state.seq.bcrp) return true;
   } catch {
+    if (seq !== state.seq.bcrp) return true;
     showState(
       "bcrp-state",
       "<strong>No se pudo cargar el BCRP.</strong><span>Revisa tu conexión.</span>",
@@ -333,7 +342,7 @@ async function loadSummary() {
     banner.hidden = false;
     banner.dataset.kind = "closed";
     banner.textContent =
-      "Mercado cerrado: el forex global no opera desde el viernes a las 16:00 hasta el domingo a las 16:00 (hora de Lima; 17:00 en Nueva York). Se muestra la última lectura disponible.";
+      "Mercado cerrado: el forex global no opera del viernes 17:00 al domingo 17:00, hora de Nueva York (en Lima, 17:00 con el horario estándar de EE. UU. y 16:00 con su horario de verano). Se muestra la última lectura disponible.";
   } else if (!health.lima_session_open) {
     pill.dataset.state = "off";
     $("market-text").textContent = "Fuera de horario en Lima";
@@ -380,6 +389,21 @@ async function loadSummary() {
   } else d.textContent = "—";
 }
 
+/** Carga con manejo de errores de render: nunca deja un rechazo sin estado visible. */
+function safe(fn, stateId) {
+  return fn().catch((err) => {
+    console.error(err);
+    showState(
+      stateId,
+      "<strong>Error al mostrar los datos.</strong>",
+      () => void safe(fn, stateId),
+    );
+    return false;
+  });
+}
+const safeLive = () => safe(loadLive, "live-state");
+const safeBcrp = () => safe(loadBcrp, "bcrp-state");
+
 async function refreshAll() {
   const guard = (fn, stateId) =>
     fn().catch((err) => {
@@ -417,23 +441,23 @@ function bindControls() {
         b.setAttribute("aria-pressed", String(b === btn));
       if (group.dataset.target === "live") {
         state.liveRange = btn.dataset.range;
-        void loadLive();
+        void safeLive();
       } else {
         state.bcrpRange = btn.dataset.range;
-        void loadBcrp();
+        void safeBcrp();
       }
     });
   }
   $("outliers").addEventListener("change", (e) => {
     state.outliers = e.target.checked;
-    void loadLive();
+    void safeLive();
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) void refreshAll();
   });
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    void loadLive();
-    void loadBcrp();
+    void safeLive();
+    void safeBcrp();
   });
 }
 
