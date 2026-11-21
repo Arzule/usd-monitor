@@ -46,3 +46,34 @@ jobs:
           fi
           echo "✅ Twelve Data USD/PEN OK"
           rm -f body.json
+
+  cloudflare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: wrangler whoami (valida token y Account ID)
+        run: npx --yes wrangler@4 whoami
+      - name: wrangler d1 list (valida permiso D1)
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 list --json > d1.json
+          echo "Bases D1 visibles: $(jq 'length' d1.json)"
+          jq -r '.[] | "- \(.name) (\(.uuid))"' d1.json
+          echo "✅ Permiso D1 OK"
+      - name: Subdominio workers.dev
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain")
+          sub=$(echo "$resp" | jq -r '.result.subdomain // empty')
+          if [ "$(echo "$resp" | jq -r '.success')" = "true" ] && [ -n "$sub" ]; then
+            echo "✅ workers.dev subdomain: ${sub}.workers.dev"
+          else
+            echo "⚠️ Sin subdominio workers.dev registrado: $(echo "$resp" | jq -c '.errors')"
+          fi
