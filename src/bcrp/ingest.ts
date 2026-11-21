@@ -10,6 +10,8 @@ const BCRP_API = "https://estadisticas.bcrp.gob.pe/estadisticas/series/api";
 export const BCRP_RECENT_DAYS = 10;
 /** Días de la carga inicial: más de 1 año. */
 export const BCRP_BACKFILL_DAYS = 400;
+/** Guard: ~250 días hábiles/año ÷ 25 filas por INSERT → muy por debajo de 50 consultas. */
+const MAX_DAYS = 1500;
 
 /** D1 admite 100 parámetros por consulta: 4 por fila → 25 filas por INSERT. */
 const ROWS_PER_STATEMENT = 25;
@@ -75,6 +77,9 @@ export async function ingestBcrp(
   now: Date = new Date(),
   fetchFn?: FetchFn,
 ): Promise<BcrpIngestResult> {
+  if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS) {
+    throw new Error(`rango de días inválido: ${String(days)}`);
+  }
   const to = limaDate(now);
   const from = limaDate(new Date(now.getTime() - days * 86_400_000));
   const rows = await fetchBcrpRange(from, to, fetchFn);

@@ -80,6 +80,7 @@ jobs:
         env:
           TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          PREV: ${{ steps.prev.outputs.version }}
         run: |
           set -uo pipefail
           for name in TWELVE_DATA_API_KEY ADMIN_TOKEN; do
@@ -99,6 +100,16 @@ jobs:
           # Se publica el Version ID aunque wrangler falle después (p. ej. al registrar
           # los crons): si la versión quedó activa, el smoke y el rollback deben correr.
           version="$(grep -oE 'Current Version ID: [0-9a-f-]+' "$RUNNER_TEMP/deploy.log" | awk '{print $4}' || true)"
+          if [ "$rc" -ne 0 ] && [ -z "$version" ]; then
+            # wrangler activa la versión antes de registrar los crons y solo imprime el ID
+            # al final: si falló a mitad, se consulta qué versión quedó activa.
+            active="$(npx wrangler deployments status --json 2>/dev/null \
+              | jq -r '[.versions[]? | select(.percentage == 100) | .version_id][0] // empty' || true)"
+            if [ -n "$active" ] && [ "$active" != "$PREV" ]; then
+              echo "::warning::wrangler falló después de activar la versión ${active}"
+              version="$active"
+            fi
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           exit "$rc"
 
@@ -117,7 +128,7 @@ jobs:
         run: |
           set -uo pipefail
           npx wrangler rollback "$PREV" --yes \
-            --message "auto-rollback: smoke test falló (run ${GITHUB_RUN_ID})" > "$RUNNER_TEMP/rollback.log" 2>&1
+            --message "auto-rollback: deploy o smoke test fallaron (run ${GITHUB_RUN_ID})" > "$RUNNER_TEMP/rollback.log" 2>&1
           rc=$?
           bash scripts/redact-log.sh "$RUNNER_TEMP/rollback.log"
           [ "$rc" -eq 0 ] || exit "$rc"
@@ -142,7 +153,10 @@ jobs:
             echo
             echo "### Smoke test (${SMOKE})"
             cat "$RUNNER_TEMP/smoke.md" 2>/dev/null || echo "No se ejecutó."
-            if [ "$SMOKE" = "failure" ] || [ "$DEPLOY" = "failure" ]; then
+            if [ -z "$NEW" ] && [ "$DEPLOY" = "failure" ]; then
+              echo
+              echo "### ❌ El deploy falló antes de publicar una versión: producción no cambió."
+            elif [ "$SMOKE" = "failure" ] || [ "$DEPLOY" = "failure" ]; then
               echo
               if [ -z "$PREV" ]; then
                 echo "### ❌ Falló el primer deploy: no hay versión previa, sin rollback."

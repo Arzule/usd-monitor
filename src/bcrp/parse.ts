@@ -60,7 +60,10 @@ export function parseBcrpResponse(body: unknown): BcrpRow[] {
   for (const p of periods as { name?: unknown; values?: unknown }[]) {
     if (typeof p.name !== "string" || !Array.isArray(p.values)) continue;
     const date = parseBcrpDate(p.name);
-    if (!date) continue;
+    if (!date) {
+      console.warn(`[bcrp] fecha no reconocida, se ignora: ${p.name.slice(0, 40)}`);
+      continue;
+    }
     const compra = parseBcrpValue(p.values[0]);
     const venta = parseBcrpValue(p.values[1]);
     if (compra === null && venta === null) continue;

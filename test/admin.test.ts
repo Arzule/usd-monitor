@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+import { createScheduledController } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isAuthorized } from "../src/admin";
@@ -107,6 +109,25 @@ describe("POST /admin/fetch", () => {
     const res = await post(URL_BCRP, `Bearer ${TOKEN}`);
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({ ok: false, error: "HTTP 500" });
+  });
+});
+
+describe("scheduled", () => {
+  it("las expresiones cron de wrangler.toml tienen handler (CRON_BCRP)", async () => {
+    const { CRON_BCRP, default: worker } = await import("../src/index");
+    const toml = (await import("../wrangler.toml?raw")).default;
+    expect(toml).toContain(`crons = ["${CRON_BCRP}"]`);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    await worker.scheduled(
+      createScheduledController({
+        cron: CRON_BCRP,
+        scheduledTime: Date.parse("2026-11-20T15:00:00Z"),
+      }),
+      env,
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("[bcrp] falló la ingesta"));
   });
 });
 

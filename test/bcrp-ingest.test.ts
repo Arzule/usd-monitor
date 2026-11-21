@@ -85,6 +85,34 @@ describe("ingestBcrp", () => {
     expect(body).toMatchObject({ periods: [{ name: "19.Nov.26" }] });
   });
 
+  it("reintenta una vez ante un 429", async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(() => Promise.resolve(new Response("", { status: 429 })))
+      .mockImplementationOnce(() => Promise.resolve(jsonResponse({ ok: 1 })));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(
+      fetchJson("https://x.test", {}, { label: "t", fetchFn, retryDelayMs: 0 }),
+    ).resolves.toEqual({ ok: 1 });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("timeout cuenta como fallo transitorio (con reintento)", async () => {
+    const fetchFn = vi.fn<typeof fetch>((_url, init) => {
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          reject(signal.reason as Error);
+        });
+      });
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(
+      fetchJson("https://x.test", {}, { label: "t", fetchFn, retryDelayMs: 0, timeoutMs: 20 }),
+    ).rejects.toThrow("timeout");
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
   it("no reintenta un 404", async () => {
     const fetchFn = vi.fn<typeof fetch>(() => Promise.resolve(new Response("no", { status: 404 })));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
