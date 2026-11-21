@@ -8,8 +8,8 @@ on:
       source:
         description: "Qué leer"
         type: choice
-        options: [bcrp, bcrp-backfill]
-        default: bcrp
+        options: [live+bcrp, live, bcrp, bcrp-backfill]
+        default: live+bcrp
 
 permissions:
   contents: read
@@ -31,17 +31,23 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           SOURCE: ${{ inputs.source }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           if [ -z "${ADMIN_TOKEN}" ]; then echo "::error::Falta el secret ADMIN_TOKEN"; exit 1; fi
-          code=$(curl -sS -m 60 -o out.json -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-            "${PROD_URL}/admin/fetch?source=${SOURCE}")
-          echo "HTTP ${code}"
-          jq . out.json || cat out.json
-          {
-            echo "## manual-fetch: \`${SOURCE}\` → HTTP ${code}"
-            echo '```json'
-            jq . out.json 2>/dev/null || cat out.json
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          [ "${code}" = "200" ]
+          # "live+bcrp" = versión de prueba: UNA lectura de Twelve Data y una del BCRP.
+          IFS='+' read -ra sources <<<"${SOURCE}"
+          ok=1
+          for s in "${sources[@]}"; do
+            code=$(curl -sS -m 60 -o out.json -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              "${PROD_URL}/admin/fetch?source=${s}" || true)
+            echo "${s}: HTTP ${code}"
+            jq . out.json 2>/dev/null || cat out.json 2>/dev/null || true
+            {
+              echo "## manual-fetch: \`${s}\` → HTTP ${code}"
+              echo '```json'
+              jq . out.json 2>/dev/null || cat out.json 2>/dev/null || echo "(sin respuesta)"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            [ "${code}" = "200" ] || ok=0
+          done
+          [ "$ok" = 1 ]

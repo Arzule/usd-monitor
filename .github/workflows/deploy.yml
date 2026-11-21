@@ -65,7 +65,7 @@ jobs:
               echo "::error::No se encontró una versión activa al 100 %; no se despliega sin rollback posible"
               exit 1
             fi
-          elif grep -q "has no deployments" "$RUNNER_TEMP/prev.err"; then
+          elif grep -qE "has no deployments|code: 10007" "$RUNNER_TEMP/prev.err"; then
             prev=""
           else
             bash scripts/redact-log.sh "$RUNNER_TEMP/prev.err"
@@ -100,7 +100,7 @@ jobs:
           # Se publica el Version ID aunque wrangler falle después (p. ej. al registrar
           # los crons): si la versión quedó activa, el smoke y el rollback deben correr.
           version="$(grep -oE 'Current Version ID: [0-9a-f-]+' "$RUNNER_TEMP/deploy.log" | awk '{print $4}' || true)"
-          if [ "$rc" -ne 0 ] && [ -z "$version" ]; then
+          if [ -z "$version" ]; then
             # wrangler activa la versión antes de registrar los crons y solo imprime el ID
             # al final: si falló a mitad, se consulta qué versión quedó activa.
             active="$(npx wrangler deployments status --json 2>/dev/null \
@@ -109,6 +109,10 @@ jobs:
               echo "::warning::wrangler falló después de activar la versión ${active}"
               version="$active"
             fi
+          fi
+          if [ "$rc" -eq 0 ] && [ -z "$version" ]; then
+            echo "::error::Deploy OK pero no se pudo determinar la versión desplegada; no se omite el smoke"
+            exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           exit "$rc"

@@ -1,5 +1,6 @@
 import { BCRP_BACKFILL_DAYS, BCRP_RECENT_DAYS, ingestBcrp } from "./bcrp/ingest";
 import { json } from "./http";
+import { CreditLimitError, ingestLive } from "./live/ingest";
 
 const encoder = new TextEncoder();
 
@@ -19,7 +20,7 @@ export async function isAuthorized(request: Request, token: string | undefined):
   return crypto.subtle.timingSafeEqual(a, b) && provided !== "";
 }
 
-export const ADMIN_SOURCES = ["bcrp", "bcrp-backfill"] as const;
+export const ADMIN_SOURCES = ["live", "bcrp", "bcrp-backfill"] as const;
 export type AdminSource = (typeof ADMIN_SOURCES)[number];
 
 function isAdminSource(s: string | null): s is AdminSource {
@@ -40,12 +41,24 @@ export async function handleAdminFetch(request: Request, env: Env, url: URL): Pr
   }
 
   try {
+    if (source === "live") {
+      // Lectura forzada: ignora el horario de mercado, respeta los créditos/min.
+      const result = await ingestLive(env, { force: true });
+      console.log(`[admin] live: ${result.status}`);
+      return json({ ok: true, source, result });
+    }
     const days = source === "bcrp-backfill" ? BCRP_BACKFILL_DAYS : BCRP_RECENT_DAYS;
     const result = await ingestBcrp(env, days);
     console.log(`[admin] ${source}: ${String(result.rows)} fechas ${result.from}..${result.to}`);
     return json({ ok: true, source, result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof CreditLimitError) {
+      return json(
+        { ok: false, source, error: message },
+        { status: 429, headers: { "retry-after": "60" } },
+      );
+    }
     console.error(`[admin] ${source} falló: ${message}`);
     return json({ ok: false, source, error: message }, { status: 502 });
   }

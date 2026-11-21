@@ -116,7 +116,7 @@ describe("scheduled", () => {
   it("las expresiones cron de wrangler.toml tienen handler (CRON_BCRP)", async () => {
     const { CRON_BCRP, default: worker } = await import("../src/index");
     const toml = (await import("../wrangler.toml?raw")).default;
-    expect(toml).toContain(`crons = ["${CRON_BCRP}"]`);
+    expect(toml).toContain(`crons = ["*/5 * * * *", "${CRON_BCRP}"]`);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
