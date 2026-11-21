@@ -1,0 +1,48 @@
+name: connectivity-check
+
+# Fase 0: valida las dependencias externas sin escribir código de la app.
+# Nunca imprime la API key (se pasa por header y GitHub además la enmascara).
+on:
+  workflow_dispatch:
+  push:
+    branches: [chore/connectivity-check]
+    paths: [.github/workflows/connectivity-check.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  twelve-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Twelve Data /quote USD/PEN (1 crédito)
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TWELVE_DATA_API_KEY}" ]; then echo "❌ TWELVE_DATA_API_KEY vacío"; exit 1; fi
+          http_code=$(curl -sS -o body.json -w '%{http_code}' \
+            -H "Authorization: apikey ${TWELVE_DATA_API_KEY}" \
+            "https://api.twelvedata.com/quote?symbol=USD/PEN")
+          echo "HTTP status: ${http_code}"
+          status=$(jq -r '.status // "ok"' body.json)
+          if [ "${status}" = "error" ]; then
+            echo "❌ Twelve Data error: code=$(jq -r '.code' body.json) message=$(jq -r '.message' body.json)"
+            exit 1
+          fi
+          symbol=$(jq -r '.symbol' body.json)
+          close=$(jq -r '.close' body.json)
+          ts=$(jq -r '.timestamp' body.json)
+          last=$(jq -r '.last_quote_at // empty' body.json)
+          open=$(jq -r '.is_market_open' body.json)
+          echo "symbol=${symbol}"
+          echo "price(close)=${close}"
+          echo "timestamp=${ts} ($(date -u -d @"${ts}" '+%Y-%m-%dT%H:%M:%SZ'))"
+          [ -n "${last}" ] && echo "last_quote_at=${last} ($(date -u -d @"${last}" '+%Y-%m-%dT%H:%M:%SZ'))"
+          echo "is_market_open=${open}"
+          if [ "${symbol}" != "USD/PEN" ] || ! [[ "${close}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "❌ Respuesta inválida para USD/PEN"; exit 1
+          fi
+          echo "✅ Twelve Data USD/PEN OK"
+          rm -f body.json
