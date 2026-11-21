@@ -1,0 +1,49 @@
+# Verifica los Cron Triggers en producción: escucha los eventos del Worker con
+# `wrangler tail` durante ~6 min (cubre al menos una ejecución del cron de 5 min)
+# y resume los eventos `scheduled` y sus logs. Solo lectura.
+name: cron-logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutos de escucha (máx. 15)"
+        default: "6"
+
+permissions:
+  contents: read
+
+jobs:
+  tail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: wrangler tail (eventos scheduled)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          set -uo pipefail
+          m="${MINUTES:-6}"; [[ "$m" =~ ^[0-9]+$ ]] && [ "$m" -le 15 ] || m=6
+          timeout "$((m * 60))" npx wrangler tail --format json > "$RUNNER_TEMP/tail.jsonl" 2>/dev/null || true
+          # Solo eventos scheduled: cron, hora y mensajes de log (sin cabeceras ni IPs).
+          jq -rc 'select(.event.cron != null) |
+            "\(.eventTimestamp / 1000 | todate) cron=\(.event.cron) outcome=\(.outcome) logs=\([.logs[]?.message[]?] | join(" | "))"' \
+            "$RUNNER_TEMP/tail.jsonl" > "$RUNNER_TEMP/scheduled.txt" || true
+          bash scripts/redact-log.sh "$RUNNER_TEMP/scheduled.txt"
+          n=$(wc -l < "$RUNNER_TEMP/scheduled.txt")
+          {
+            echo "## Cron en producción (${m} min de escucha)"
+            echo "Eventos scheduled: ${n}"
+            echo '```'
+            bash scripts/redact-log.sh "$RUNNER_TEMP/scheduled.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$n" -gt 0 ] || { echo "::error::No se observó ningún evento scheduled"; exit 1; }
