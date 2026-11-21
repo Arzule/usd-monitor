@@ -10,7 +10,10 @@ export default defineConfig(async () => {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./wrangler.toml" },
-        miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
+        miniflare: {
+          // ADMIN_TOKEN de prueba (no es un secret real); TEST_MIGRATIONS para la D1 de test.
+          bindings: { TEST_MIGRATIONS: migrations, ADMIN_TOKEN: "test-admin-token" },
+        },
       }),
     ],
     test: {

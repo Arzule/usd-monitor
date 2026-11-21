@@ -1,0 +1,47 @@
+# Lectura forzada en producción vía el endpoint admin protegido.
+# ADMIN_TOKEN está guardado como secret de GitHub y como secret del Worker.
+name: manual-fetch
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Qué leer"
+        type: choice
+        options: [bcrp, bcrp-backfill]
+        default: bcrp
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-fetch
+  cancel-in-progress: false
+
+env:
+  PROD_URL: https://usd-monitor.gcs14.workers.dev
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /admin/fetch
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          SOURCE: ${{ inputs.source }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ADMIN_TOKEN}" ]; then echo "::error::Falta el secret ADMIN_TOKEN"; exit 1; fi
+          code=$(curl -sS -m 60 -o out.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            "${PROD_URL}/admin/fetch?source=${SOURCE}")
+          echo "HTTP ${code}"
+          jq . out.json || cat out.json
+          {
+            echo "## manual-fetch: \`${SOURCE}\` → HTTP ${code}"
+            echo '```json'
+            jq . out.json 2>/dev/null || cat out.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "${code}" = "200" ]
