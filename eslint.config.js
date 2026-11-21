@@ -15,7 +15,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.js", "public/**/*.js"],
+    files: ["**/*.js"],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: {
       ...tseslint.configs.disableTypeChecked.languageOptions,

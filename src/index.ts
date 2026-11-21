@@ -1,17 +1,13 @@
 import { json } from "./http";
+import { dispatch, type Routes } from "./router";
+
+const routes: Routes = {
+  "/api/health": { GET: () => json({ status: "ok" }) },
+};
 
 export default {
-  async fetch(request, env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname === "/api/health" && request.method === "GET") {
-      return json({ status: "ok" });
-    }
-
-    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/admin/")) {
-      return json({ error: "not_found" }, { status: 404 });
-    }
-
-    return env.ASSETS.fetch(request);
+  async fetch(request, env, ctx): Promise<Response> {
+    const res = await dispatch(routes, request, env, ctx);
+    return res ?? env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
