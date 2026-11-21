@@ -19,6 +19,11 @@ database_name = "usd-monitor"
 database_id = "3659826b-26e1-4b28-abd1-e018acf616a9"
 migrations_dir = "migrations"
 
+# Cron Triggers (UTC). El plan Free permite 5 por cuenta; usamos 2 en total.
+# BCRP: cada hora en días hábiles (debe coincidir con CRON_BCRP en src/index.ts).
+[triggers]
+crons = ["0 * * * MON-FRI"]
+
 [observability]
 enabled = true
 
