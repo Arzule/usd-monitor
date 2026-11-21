@@ -16,7 +16,7 @@ trap 'rm -rf "$TMP"' EXIT
 # Cada check se implementa en una función check_<nombre>.
 # Los endpoints que aún no existen se agregan aquí cuando se implementan.
 # SMOKE_CHECKS permite elegir un subconjunto (p. ej. "health home").
-read -ra CHECKS <<<"${SMOKE_CHECKS:-health live_latest bcrp_latest home}"
+read -ra CHECKS <<<"${SMOKE_CHECKS:-health live_latest bcrp_latest home mcp}"
 
 # http <método> <ruta> [cuerpo] → deja el cuerpo en $TMP/body y devuelve el código HTTP.
 http() {
@@ -59,6 +59,19 @@ check_bcrp_latest() {
   json_ok '"data" in b && (b.data === null || (/^\d{4}-\d{2}-\d{2}$/.test(b.data.date) && ["compra", "venta"].every((k) => b.data[k] === null || typeof b.data[k] === "number")))' \
     || { echo "forma JSON inesperada"; return 1; }
   echo "200, forma ok"
+}
+
+# MCP: initialize válido (la respuesta puede venir como JSON o como SSE "data: {...}").
+check_mcp() {
+  local init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
+  local code; code="$(http POST /mcp "$init")"
+  [ "$code" = "200" ] || { echo "HTTP $code"; return 1; }
+  node -e 'const t = require("fs").readFileSync(0, "utf8");
+    const raw = t.includes("data:") ? t.split("
+").filter((l) => l.startsWith("data:")).map((l) => l.slice(5)).join("") : t;
+    const b = JSON.parse(raw);
+    process.exit(b.result && b.result.serverInfo && b.result.serverInfo.name === "usd-monitor" ? 0 : 1);'     < "$TMP/body" 2>/dev/null || { echo "respuesta MCP inválida"; return 1; }
+  echo "200, initialize ok"
 }
 
 check_home() {
