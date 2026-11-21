@@ -1,0 +1,132 @@
+# Despliegue a producción en cada push a main:
+# verificación → migraciones D1 → deploy (con secrets) → smoke test → rollback si falla.
+# La salida de wrangler se filtra para no publicar datos de la cuenta en los logs.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Nunca dos deploys a la vez; tampoco se cancela uno en curso (podría dejar migraciones a medias).
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  PROD_URL: https://usd-monitor.gcs14.workers.dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://usd-monitor.gcs14.workers.dev
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Typecheck y tests
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Migraciones D1 remotas
+        run: |
+          set -uo pipefail
+          npx wrangler d1 migrations apply DB --remote > "$RUNNER_TEMP/migrations.log" 2>&1
+          rc=$?
+          grep -vi "email" "$RUNNER_TEMP/migrations.log" || true
+          exit "$rc"
+
+      - name: Versión activa previa
+        id: prev
+        run: |
+          set -uo pipefail
+          # Sin deployments (primer deploy) el comando falla → prev vacío → sin rollback.
+          prev="$(npx wrangler deployments status --json 2>/dev/null \
+            | jq -r '[.versions[]? | select(.percentage == 100) | .version_id][0] // empty' 2>/dev/null || true)"
+          echo "version=${prev}" >> "$GITHUB_OUTPUT"
+          echo "Versión previa: ${prev:-ninguna (primer deploy)}"
+
+      - name: Deploy (código + secrets del Worker)
+        id: deploy
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+        run: |
+          set -uo pipefail
+          # Los secrets se suben junto con la versión (--secrets-file), así código y
+          # secrets se publican de forma atómica. El archivo vive en RUNNER_TEMP y se borra.
+          sf="$RUNNER_TEMP/worker-secrets.json"
+          trap 'rm -f "$sf"' EXIT
+          umask 077
+          jq -n --arg twelve "$TWELVE_DATA_API_KEY" '{TWELVE_DATA_API_KEY: $twelve}' > "$sf"
+          npx wrangler deploy --secrets-file "$sf" \
+            --message "deploy ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})" > "$RUNNER_TEMP/deploy.log" 2>&1
+          rc=$?
+          grep -E "Uploaded|Deployed|Current Version ID|https://|schedule|ERROR|✘" "$RUNNER_TEMP/deploy.log" | grep -vi "email" || true
+          [ "$rc" -eq 0 ] || exit "$rc"
+          version="$(grep -oE 'Current Version ID: [0-9a-f-]+' "$RUNNER_TEMP/deploy.log" | awk '{print $4}')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        id: smoke
+        run: bash scripts/smoke.sh "$PROD_URL" "$RUNNER_TEMP/smoke.md"
+
+      - name: Rollback a la versión previa
+        id: rollback
+        if: failure() && steps.deploy.outcome == 'success' && steps.smoke.outcome == 'failure' && steps.prev.outputs.version != ''
+        env:
+          PREV: ${{ steps.prev.outputs.version }}
+        run: |
+          set -uo pipefail
+          npx wrangler rollback "$PREV" --yes \
+            --message "auto-rollback: smoke test falló (run ${GITHUB_RUN_ID})" > "$RUNNER_TEMP/rollback.log" 2>&1
+          rc=$?
+          grep -E "Performing rollback|SUCCESS|ERROR|✘" "$RUNNER_TEMP/rollback.log" | grep -vi "email" || true
+          [ "$rc" -eq 0 ] || exit "$rc"
+          echo "Re-ejecutando smoke test contra la versión restaurada"
+          bash scripts/smoke.sh "$PROD_URL" "$RUNNER_TEMP/smoke-after-rollback.md"
+
+      - name: Resumen
+        if: always()
+        env:
+          PREV: ${{ steps.prev.outputs.version }}
+          NEW: ${{ steps.deploy.outputs.version }}
+          DEPLOY: ${{ steps.deploy.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          ROLLBACK: ${{ steps.rollback.outcome }}
+        run: |
+          {
+            echo "## Deploy a producción"
+            echo "- URL: ${PROD_URL}"
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Versión desplegada: \`${NEW:-—}\` (deploy: ${DEPLOY})"
+            echo "- Versión previa: \`${PREV:-ninguna (primer deploy)}\`"
+            echo
+            echo "### Smoke test (${SMOKE})"
+            cat "$RUNNER_TEMP/smoke.md" 2>/dev/null || echo "No se ejecutó."
+            if [ "$SMOKE" = "failure" ]; then
+              echo
+              if [ -z "$PREV" ]; then
+                echo "### ❌ Smoke test falló en el primer deploy: no hay versión previa, sin rollback."
+              elif [ "$ROLLBACK" = "success" ]; then
+                echo "### ⏪ Rollback a \`${PREV}\` completado; la versión previa responde correctamente"
+                cat "$RUNNER_TEMP/smoke-after-rollback.md" 2>/dev/null
+              else
+                echo "### 🚨 Rollback a \`${PREV}\` FALLÓ (${ROLLBACK}): revisar producción manualmente"
+                cat "$RUNNER_TEMP/smoke-after-rollback.md" 2>/dev/null
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

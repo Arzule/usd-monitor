@@ -12,6 +12,13 @@ binding = "ASSETS"
 not_found_handling = "404-page"
 run_worker_first = ["/api/*", "/mcp", "/mcp/*", "/admin/*"]
 
+# Creada por .github/workflows/setup-d1.yml. El id no es secreto.
+[[d1_databases]]
+binding = "DB"
+database_name = "usd-monitor"
+database_id = "3659826b-26e1-4b28-abd1-e018acf616a9"
+migrations_dir = "migrations"
+
 [observability]
 enabled = true
 
