@@ -8,7 +8,14 @@ import { handleMcp } from "./mcp";
 import { dispatch, type Routes } from "./router";
 
 const routes: Routes = {
-  "/api/health": { GET: (_req, env) => health(env) },
+  // SIMULACRO DE ROLLBACK (se revierte en el PR siguiente): rompe /api/health solo en
+  // el host de producción, así CI pasa y el smoke test del deploy debe fallar y revertir.
+  "/api/health": {
+    GET: (_req, env, _ctx, url) =>
+      url.hostname === "usd-monitor.gcs14.workers.dev"
+        ? Response.json({ status: "broken-on-purpose" }, { status: 500 })
+        : health(env),
+  },
   "/api/live/latest": { GET: (_req, env) => liveLatest(env) },
   "/api/live": { GET: (_req, env, _ctx, url) => liveHistory(env, url) },
   "/api/bcrp/latest": { GET: (_req, env) => bcrpLatest(env) },
