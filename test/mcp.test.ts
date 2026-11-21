@@ -70,6 +70,19 @@ async function seed() {
 }
 
 describe("MCP /mcp", () => {
+  it("rechaza un Host ajeno (protección contra DNS rebinding)", async () => {
+    const res = await exports.default.fetch("https://evil.example/mcp", {
+      method: "POST",
+      headers: {
+        host: "evil.example",
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: "{}",
+    });
+    expect(res.status).toBe(403);
+  });
+
   it("initialize devuelve serverInfo y capacidad de tools", async () => {
     const { status, body } = await rpc("initialize", {
       protocolVersion: "2025-06-18",
@@ -121,7 +134,7 @@ describe("MCP /mcp", () => {
     const ok = await callTool("get_live_history", { range: "1d" });
     expect(ok.data).toMatchObject({ range: "1d", count: 1, min: 3.45, max: 3.45 });
     const bad = await callTool("get_live_history", { range: "10y" });
-    expect(bad.isError || "error" in bad.raw).toBe(true);
+    expect(bad.isError).toBe(true);
   });
 
   it("get_official_rate: fecha exacta, día sin dato (anterior) y sin fecha", async () => {
@@ -135,8 +148,9 @@ describe("MCP /mcp", () => {
       exact: false,
     });
     expect((await callTool("get_official_rate")).data).toMatchObject({ date: daysAgo(2) });
-    const bad = await callTool("get_official_rate", { date: "20.Nov.26" });
-    expect(bad.isError || "error" in bad.raw).toBe(true);
+    for (const date of ["20.Nov.26", "2026-02-30"]) {
+      expect((await callTool("get_official_rate", { date })).isError).toBe(true);
+    }
   });
 
   it("get_official_history: rango válido, invertido y demasiado largo", async () => {
@@ -152,6 +166,13 @@ describe("MCP /mcp", () => {
     expect(
       (await callTool("get_official_history", { from: "2020-01-01", to: daysAgo(0) })).isError,
     ).toBe(true);
+    // Borde: 400 días inclusivos pasan, 401 no.
+    expect(
+      (await callTool("get_official_history", { from: daysAgo(399), to: daysAgo(0) })).isError,
+    ).toBe(false);
+    expect(
+      (await callTool("get_official_history", { from: daysAgo(400), to: daysAgo(0) })).isError,
+    ).toBe(true);
   });
 
   it("compare_live_vs_official: diferencias contra compra y venta", async () => {
@@ -162,6 +183,7 @@ describe("MCP /mcp", () => {
       official: { date: daysAgo(2) },
       vs_venta: { abs: 0.02 },
     });
+    expect(r.data.explanation).toMatch(/por encima del tipo de cambio oficial de venta del BCRP/);
     const pct = (r.data.vs_venta as { pct: number }).pct;
     expect(pct).toBeCloseTo((0.02 / 3.43) * 100, 3);
   });
