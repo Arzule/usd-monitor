@@ -20,7 +20,7 @@ database_id = "3659826b-26e1-4b28-abd1-e018acf616a9"
 migrations_dir = "migrations"
 
 # Cron Triggers (UTC). El plan Free permite 5 por cuenta; usamos 2 en total.
-# Expresiones en UTC; deben coincidir con CRON_LIVE / CRON_BCRP en src/index.ts.
+# Expresiones en UTC; deben coincidir con CRON_LIVE / CRON_BCRP en src/crons.ts.
 # - Live: cada 5 min (omite la llamada con el mercado forex cerrado).
 # - BCRP: cada hora de lunes a viernes UTC (≈ días hábiles en Lima; la ventana de 10 días cubre el desfase).
 [triggers]

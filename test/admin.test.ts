@@ -159,7 +159,8 @@ describe("POST /admin/fetch?source=live", () => {
 
 describe("scheduled", () => {
   it("las expresiones cron de wrangler.toml tienen handler (CRON_BCRP)", async () => {
-    const { CRON_BCRP, CRON_LIVE, default: worker } = await import("../src/index");
+    const { CRON_BCRP, CRON_LIVE } = await import("../src/crons");
+    const { default: worker } = await import("../src/index");
     const toml = (await import("../wrangler.toml?raw")).default;
     expect(toml).toContain(`crons = ["${CRON_LIVE}", "${CRON_BCRP}"]`);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

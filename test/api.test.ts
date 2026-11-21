@@ -1,9 +1,13 @@
 import { env, exports } from "cloudflare:workers";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const BASE = "https://example.com";
 const get = (path: string, init?: RequestInit) => exports.default.fetch(`${BASE}${path}`, init);
 const now = () => Math.floor(Date.now() / 1000);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 beforeEach(async () => {
   await env.DB.batch([
@@ -131,7 +135,7 @@ describe("errores", () => {
     expect(res.status).toBe(503);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual({ status: "error", error: "unavailable" });
-    vi.restoreAllMocks();
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });
 
   it("market_open refleja el horario real", async () => {
